@@ -42,7 +42,14 @@ def run_cycle(
     state_dir: Path,
     config: CycleConfig | None = None,
 ) -> dict:
-    """Run one full improvement cycle. Returns the run log entry."""
+    """Run one full improvement cycle. Returns the run log entry.
+
+    The cycle stops at proposals. Do not add an implement stage that shells out
+    to `claude -p`: from inside Claude Code its changes vanish while the exit
+    code stays 0. Implementation is done by the `/canopy:improve` skill
+    (plugins/canopy/skills/improve/SKILL.md), which dispatches worktree-isolated
+    agents and checks that each returned a PR URL.
+    """
     config = config or CycleConfig()
     run = create_run_entry()
 

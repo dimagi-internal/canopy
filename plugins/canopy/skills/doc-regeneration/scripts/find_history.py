@@ -10,7 +10,7 @@ Docs describe the present; GitHub holds the history. This flags lines with:
             retired|renamed|deprecated", "fixed in|by", "was X, now Y"
 
 It does NOT flag a date inside a filename or link target
-(docs/superpowers/specs/2026-10-06-x.md, specs/2026-10-06-x, [spec](specs/2026-10-06-x.md)), section
+(docs/runs/2026-10-06-x.md, runs/2026-10-06-x, [run](runs/2026-10-06-x.md)), section
 numbers like (4.1.5.1), URLs, or fenced code blocks. Every audience is held to
 the same rule: an integrator guide states the current contract, not a changelog.
 
@@ -19,8 +19,7 @@ Exit 1 if anything is flagged.
 
     python3 find_history.py [--root DIR] [--ignore-file PATH | --no-ignore] FILE.md [FILE.md ...]
 
-A doc whose dated notes are its content (a design record), or a line that must
-carry a date, is listed once, with a reason, in `.docs-ignore` at the repo root;
+A line that must carry a date (an event name, a quoted identifier), is listed once, with a reason, in `.docs-ignore` at the repo root;
 see docs_ignore.py. `--no-ignore` shows everything. Entries nothing matched
 print as UNUSED.
 
@@ -63,7 +62,7 @@ DATED_LINK = re.compile(r"\[[^\]]*\]\([^)]*\d{4}-\d{2}-\d{2}[^)]*\)")
 # Any other link target, and any path-ish token that carries a date.
 LINK_TARGET = re.compile(r"\]\([^)]*\)")
 DATED_PATH = re.compile(r"[\w./-]*\d{4}-\d{2}-\d{2}[\w.-]*(?:/[\w./-]*|\.\w+)")
-# A dated slug (2026-10-06-caller-context-brain): a design record's name, with or without its extension.
+# A dated slug (2026-10-06-caller-context-brain): a dated file's name, with or without its extension.
 DATED_SLUG = re.compile(r"[\w./-]*\d{4}-\d{2}-\d{2}-[A-Za-z][\w.-]*")
 
 

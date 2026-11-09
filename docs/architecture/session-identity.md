@@ -1,370 +1,65 @@
 # Session identity — who a session may act as (`canopy cred`)
 
-> Contract: every implementation (canopy, canopy-web, the agent repos' MCP servers) follows this
-> page. It is one part of **shared agent plugins, separate identities**.
+> Contract: every implementation (canopy, canopy-web, the agent repos' MCP servers) follows this page. Identity comes from the **session**, not from whichever plugin is loaded: a plugin that reads an identity from its own data makes every session that loads it act as that agent.
 
-## The problem
+Flags, subcommands and output of `canopy cred` are in `canopy cred --help` and the module docstring of `src/orchestrator/cred_cli.py`; this page holds the rules around them.
 
-Identity comes from the **session**, not from whichever plugin happens to be loaded. A plugin that
-reads an identity from its own data makes every session that loads it act as that agent.
+## Where secrets live and how they reach a machine
 
-## 1. Where the secrets live: the Canopy vault
+- Every agent's secrets live in its **Canopy vault** on canopy-web, read from `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are ciphertext there, opened only on a device that holds a grant (§ Zero-knowledge). `canopy agent env`, `canopy cred` and the SessionStart hook all take this path; the Canopy vault is the only credential source.
+- The broker writes the per-agent env file `~/.<slug>/.env` (0600) once, so every `bin/` script keeps working. It re-resolves only when the file is missing, on `canopy cred refresh`, or when `canopy cred sync` sees the vault's fingerprint change: the SessionStart hook (`plugins/canopy/hooks/agent_session_start.py`) runs `sync`, throttled by `~/.<slug>/.env.stamp` (`cred_cli.py::SYNC_TTL`). `canopy cred check` caches canopy-web's `/access` verdict (never values) in `~/.canopy/cred-cache.json` (`cred_cli.py::CACHE_TTL`).
+- Every canopy caller resolves through one client, `src/orchestrator/cred_resolve.py` (`?refs=` for a subset, `X-Canopy-Turn-Id` when a turn is known, a device proof when the machine holds a device key; module docstring).
 
-Every agent's secrets live in its **Canopy vault** on canopy-web. The values
-come back from `GET /api/agents/{slug}/credentials/resolve`. A zero-knowledge agent's values are
-ciphertext there, opened only on a device that holds a grant (§ Zero-knowledge). ada, ace, echo,
-eva and hal are zero-knowledge (kv 1); lex and fizzy were born zero-knowledge (kv 0). `canopy agent
-env`, `canopy cred` and the SessionStart hook all take this path.
+## Who may resolve which agent (`cred_cli.py::decide`)
 
-## 2. Resolved once, kept current
+`canopy cred` decides; canopy-web enforces the same rule for its backend.
 
-The broker resolves once and writes the per-agent env file `~/.<slug>/.env` (chmod 600), so every
-`bin/` script and `_env.py` keeps working unchanged. It re-resolves only when the file is missing,
-on `canopy cred refresh`, or when a caller reports an auth failure (and then runs `canopy cred
-refresh`). A value changed in the vault reaches the file without anyone re-running anything: the
-canopy SessionStart hook (`agent_session_start.py`) runs `canopy cred sync`, which re-writes
-`~/.<slug>/.env` only when the fingerprint of the vault's values changed. It checks at most every
-5 minutes per agent (`~/.<slug>/.env.stamp`). The cloud runner applies the same rule when it
-claims a turn (canopy-web `cloud_runner._refresh_agent_env`), so laptops and cloud agree on what
-"changed" means. `canopy cred check` caches canopy-web's `/access` answer for 10 minutes in
-`~/.canopy/cred-cache.json` (verdicts only, never values).
+- **A runner turn** (a turn id is known: `$CANOPY_TURN_ID`, the caller envelope, or the laptop's by-task record) may act only as its own agent (`$CANOPY_AGENT_SLUG`, else `$CANOPY_AGENT`, else the envelope's `agent`). Any other `--agent` is refused; runner turns never take the human path below.
+- **A human session** may act as X when `~/.X/.env` is already resolved on this machine (non-empty, owned by the user, no group/other bits; checked without asking canopy-web; `--refresh` skips it), or when `GET /api/agents/X/credentials/access` says `may_resolve` (the user pairs a runner X routes to, `via: "runner"`, or is X's owner/admin, `via: "admin"`).
+- **Otherwise** the session acts as the human, and the refusal paragraph names the access to get.
+- An unreachable `/access` is treated as `may_resolve = false`: an unreachable canopy-web never grants anything. `/access` is asked with the current turn, because a licence holder resolves only during their own local turn.
 
-## 3. Who may resolve which agent
+Exit codes callers may rely on (`cred_cli.py::EXIT_*`): 0 allowed, 1 error, 2 usage (no agent named or detectable), 3 refused (stderr carries one actionable paragraph), 4 undetermined (treat as refused). No command prints a secret value; `env` and `google-token` print a path. The one exception is `env --runner --print-json`, for a runner process's in-memory cache; a baseline rail denies it in an agent's turn.
 
-`canopy cred` decides; canopy-web enforces it for its own backend.
+## Agent-identity MCP servers
 
-- **A runner turn** — a turn id is known (`$CANOPY_TURN_ID`, the caller envelope, or the laptop's
-  by-task record) — may act only as its own agent (`$CANOPY_AGENT_SLUG`, else `$CANOPY_AGENT`, else
-  the envelope's `agent`). Any other `--agent` is refused.
-- **A human session** may act as agent X when:
-  - **X's env is already resolved on this machine**: `~/.X/.env` exists, is non-empty, is owned
-    by this user and is private (no group/other bits). This is checked first and does not ask
-    canopy-web, so the one-time resolve really is one-time. `--refresh`
-    skips it and re-proves access. Runner turns never take this path. Otherwise:
-  - `GET /api/agents/X/credentials/access` says `may_resolve` — the user
-    pairs a runner X routes to (`via: "runner"`) or is X's owner/admin (`via: "admin"`). The
-    `/resolve` route gains the admin-bearer path, audited like the runner path.
-- **Otherwise** the session acts as the human, and the refusal says exactly what access to get.
+An MCP server that acts as an agent (canopy-gws, the agent repos' Drive servers) calls `canopy cred check --agent <its agent>` before acting. Where the session may not be that agent it returns the refusal text and **never falls back to a bundled key**; a missing `canopy` CLI is a refusal too. Minimal contract (Node): `spawnSync("canopy", ["cred","check","--agent",agent])`; non-zero exit means refuse with stderr as the error text. A reference implementation: `plugins/canopy/mcp/gws/lib/session-identity.ts`.
 
-If `/access` can't be reached, `canopy cred` assumes `may_resolve` is false, so an unreachable
-canopy-web never grants anything by itself. `/access` is
-asked with the current turn (`X-Canopy-Turn-Id`), since a licence holder may resolve only during
-their own local turn.
+**Shared integration keys are for people, not agents.** A tool that signs in to Google with a shared service account acts as the session's agent when there is one: `canopy cred google-token` hands it a short-lived token for that agent's own Google login, so the agent reads and writes exactly what was shared with it. `google-token --delegated ACCOUNT` does the same for a Google account a person delegated to the agent (the vault entry `google-delegated-<account>`, sealed only to the machines that run the agent); the runner stages it before each turn (`cred_cli.py`, `$CANOPY_DELEGATED_GOOGLE`).
 
-## 4. Agent-identity MCP servers
+## What keeps one agent's secrets from another
 
-ace-gdrive, chrome-sales gdrive and canopy-gws (currently unregistered) call `canopy cred check --agent <their agent>`
-before acting. In a session that isn't allowed to be that agent they return a clear refusal that
-names the right path, and **never fall back to their bundled key**. A missing `canopy` CLI is a
-refusal too.
+What each layer actually enforces, and what it does not:
 
-**Shared integration keys are for people, not agents.** A tool that signs in to Google with a shared
-service account (chrome-sales' Drive tools) acts as the session's agent instead when there is one:
-`canopy cred google-token` hands it a short-lived token for that agent's own Google login (the
-mailbox login the runner already keeps), and the service-account key stays a human-session path.
-An agent then reads and writes exactly what was shared with it, under its own name.
+- **The decision (§ above).** Governs *resolving* only; it does nothing about a file another agent's resolve already left on disk.
+- **Unix users per isolation unit.** The operating system is the boundary only on a runner box that gives each unit its own Unix user; on a box that runs every agent as one user, and on a laptop (one desktop user), only the decision and the rails apply. Root on a box is trusted.
+- **Secrets off disk** (opt-in per runner, `$CANOPY_TURN_ENV_ROOT`): `canopy agent prepare --runner` resolves and checks in memory and writes no `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json`; each turn's env is written by `canopy cred env --runner --out PATH` (0600; refused outside the root), handed over as `$CANOPY_AGENT_ENV_FILE` and removed when the turn ends. Every reader looks there first (`src/orchestrator/agent_env_file.py`, the MCP headersHelper). The file is skipped for a slug other than the turn's agent. `agent_session_start.py` leaves it alone.
+- **Per-agent mail keyrings** (opt-in per runner, `$CANOPY_GOG_SECRET_FILE`): each agent gets its own gog home `~/.gog/<slug>/` and a derived keyring password, so a confined turn's mail access carries only its own agent's pair and never the secret's path (`src/orchestrator/gog_home.py::confined_mail_env`). Without the variable gog keeps one home and one keyring.
+- **Read rails (defence in depth inside one Unix user).** `plugins/canopy/agent-core/gating-baseline.json` (`always`, `agent_only`) denies an agent's turn reading another agent's `~/.<other>/.env`, another turn's per-turn env directory, the box's `~/.canopy/device-key/`, another agent's `~/.gog/<other>/`, the shared gog credential files, and `/etc/canopy-runner/`, through the shell and the file tools, plus `canopy cred env --print-json`. A person's own session is not railed, and `~/.claude/projects/` is not railed (transcript-review skills read other sessions by design). Rails match spelled-out paths; a turn that builds a path another way is not stopped by them. They are not the boundary.
+- **Residual risk:** one agent's FULL turn reading another's secrets in the SAME Unix user is stopped only by the rails.
 
-## 5. What keeps one agent's secrets from another
+## Canopy Vault
 
-Four things, and what each one actually enforces:
-
-- **The decision (`canopy cred`, §3).** A runner turn may resolve only its own agent; canopy-web
-  resolves only for a runner the agent routes to, or for its owner/admin. This is enforced, but
-  it governs *resolving*. It does nothing about a file another agent's resolve already left on
-  disk.
-- **Unix users, on a box that runs units** — *pending (canopy-web units work)*: not shipped
-  yet; until it is, a cloud box runs every agent as one user. A cloud box will run several isolation units (a
-  workspace tree, or one agent), each as its own Unix user with its own home, runner process,
-  `Runner` row and device key. The operating system then keeps unit A's turns out of unit B's
-  home, env files, gog keyrings, transcripts and worktrees, and that is the boundary. See the
-  threat model below.
-- **Secrets off disk (opt-in per runner).** A runner that sets `$CANOPY_TURN_ENV_ROOT` keeps no
-  persistent secret files: `canopy agent prepare --runner` resolves and checks the env in memory
-  and writes no `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json`; each turn's env is written
-  by `canopy cred env --runner --out /run/canopy/<uid>/<turn>/env` (0600, refused outside the
-  root), handed to the turn as `$CANOPY_AGENT_ENV_FILE`, and removed when the turn ends. Every
-  reader looks there first (`orchestrator/agent_env_file.py`, the MCP headersHelper) and falls
-  back to `~/.<slug>/.env`. It is skipped for a slug other than the turn's agent
-  (`CANOPY_AGENT_SLUG` / `CANOPY_AGENT`); when the session names NO agent, the file is used for
-  whatever slug is asked — the runner always names the turn's agent, so that case is a process
-  started outside a turn. A runner that does not opt in, and
-  every laptop, keeps `~/.<slug>/.env` as before.
-- **Per-agent mail keyrings (opt-in per runner).** A runner that sets `$CANOPY_GOG_SECRET_FILE`
-  (its unit's 32 random bytes) gives each agent its own gog home `~/.gog/<slug>/` and its own
-  `file`-keyring password, `HKDF-SHA256(secret, info = "gog:" + slug)` hex
-  (`orchestrator/gog_home.py`). There is no box-wide keyring password, so a confined turn's mail
-  access (`gog_home.confined_mail_env`) carries only its own agent's pair and never the
-  secret's path — *the canopy side is shipped; the confined turn's env is built by canopy-web's
-  `cloud_runner`, which does not call it yet (pending, canopy-web units work)*. Without the
-  variable, gog keeps one home and one keyring, as before.
-- **Read rails (defence in depth, inside one Unix user).** The fleet gating baseline
-  (`plugins/canopy/agent-core/gating-baseline.json`, `always`, `agent_only`) denies an agent's
-  turn reading another agent's `~/.<other>/.env`, another turn's `/run/canopy/…/`, the box's
-  `~/.canopy/device-key/`, another agent's `~/.gog/<other>/`, the credential files in the shared
-  `~/.config/gogcli/` (its `keyring/`, `*token*`/`*credentials*.json` — not gog's downloads or
-  exports), and `/etc/canopy-runner/`, through the shell and the file tools (Read on its path,
-  Grep on where it searches — never on its search text — Glob on its path and pattern), and
-  `canopy cred env --print-json`. A person's own session is not railed; it does not even run the
-  rails on Read/Grep/Glob. The turn's own env stays readable.
-  `~/.claude/projects/` is not railed: transcript-review skills read other sessions by design.
-  Rails match spelled-out paths; a turn that builds a path some other way is not stopped by them.
-  They are not the boundary.
-
-On a single-user laptop every agent's `~/.<slug>/.env` sits under one Unix user, so only the
-decision and the rails apply there.
-
-### Threat model: a box with several units
-
-| | protected | how | where |
-|---|---|---|---|
-| Unit A's turn reading unit B's env files, keyrings, transcripts, worktrees | pending (canopy-web units work) | Unix user per unit, homes 0700 | canopy-web `runner/ec2/runner.cfn.yaml` |
-| Unit A acting as unit B's runner to canopy-web | pending (canopy-web units work) | each unit has its own device key and `RunnerAccessToken`; a runner resolves only agents routed to it | canopy-web `runner_auth`, `routing`; canopy `vault device --kind software --public-jwk/--registered` (shipped) |
-| Unit A unwrapping unit B's zero-knowledge vault keys | pending (canopy-web units work) | wraps go to each unit's own ECDH key; the KMS broker answers a uid only with its own unit's key | canopy-web `kms_broker.py` (not shipped); canopy `device_key` `$CANOPY_ECDH_BROKER` client (shipped) |
-| A turn using the box's instance role | pending (canopy-web units work) | IMDS root-only (iptables) | canopy-web `runner.cfn.yaml` |
-| A turn reading a secret after its turn ended | canopy side shipped; runner pending (canopy-web units work) | per-turn tmpfs env, removed in `finally`, swept at start | canopy `cred env --out` (shipped); canopy-web `cloud_runner` (not yet) |
-| A confined turn reading other agents' mail | canopy side shipped; runner pending (canopy-web units work) | per-agent gog home and derived password; the secret file is not readable to it | canopy `gog_home.confined_mail_env` (shipped, not yet called by `cloud_runner`); `profile_guard` `read_paths` |
-| One agent's FULL turn reading another agent's secrets in the SAME unit | partly | rails only; it runs as the same user, and could derive another agent's gog password from the unit secret | gating baseline |
-| Root on the box | no | the operator who can `sudo` is trusted | — |
-| A laptop's agents, from each other | partly | one desktop user; rails only | gating baseline |
-
----
-
-## The CLI contract
-
-```
-canopy cred check   [--agent X] [--refresh] [--json]
-canopy cred env     [--agent X] [--refresh]
-canopy cred env     --slug X [--runner [--agent-root DIR]] --out PATH
-canopy cred env     --slug X --runner [--agent-root DIR] --print-json
-canopy cred refresh [--agent X]
-canopy cred sync    [--agent X] [--ttl S]
-canopy cred exec    [--agent X] [--ref NAME …] -- <cmd> [args…]
-canopy cred google-token [--agent X]
-canopy cred google-token --delegated ACCOUNT [--agent X]
-canopy cred google-token --runner --delegated ACCOUNT --agent X
-canopy cred whoami  [--json]
-```
-
-`--agent` defaults to the session's agent: `$CANOPY_AGENT_SLUG` / `$CANOPY_AGENT`, the dispatched
-turn's envelope, else the cwd's agent repo (`.claude-plugin/plugin.json` name). With none of those,
-the command exits 2: `this session is not an agent … Pass --agent <slug>.`
-
-| exit | meaning |
-|---|---|
-| 0 | allowed (`check`); env present/resolved (`env`, `refresh`) |
-| 1 | error — resolve failed (canopy-web `/resolve` failed) |
-| 2 | usage — no agent named and none detectable, or a malformed slug |
-| 3 | **refused** — this session may not act as X; stderr carries one actionable paragraph |
-| 4 | undetermined — `check` hit an unexpected error; treat as refused |
-
-- **`check`** prints `ok: this session may act as 'X' — <reason>` on success. With `--json`, stdout
-  is one JSON object: `{agent, allowed, identity: "agent-turn"|"human", via, reason,
-  message, exit_code, notes}`. Refusal paragraphs:
-  - turn for another agent: *This is agent 'ada's runner turn (…), so it may act only as 'ada' —
-    not as 'ace'. To get work done as 'ace', dispatch it or ask it …*
-  - canopy-web says no / unreachable: names the agent admin on canopy-web (`/agents/X → Settings`)
-    and `canopy agent use X`.
-- **`env`** ensures `~/.X/.env` (0600) — resolving only when missing or with `--refresh` — and
-  prints **only its path** on stdout (a status line goes to stderr). Refused → exit 3, nothing
-  written. It writes each `values` entry whose name is an env identifier;
-  others (e.g. `gog-token`) are staged by their own paths and listed, by name, on stderr.
-  In a turn whose runner set `$CANOPY_AGENT_ENV_FILE` (for X), it prints that path and writes
-  nothing.
-- **`env --out PATH`** resolves X's env **in memory** and writes it to PATH only: parents 0700,
-  the file 0600 (each missing parent directory is created 0700), env-identifier names only. With `$CANOPY_TURN_ENV_ROOT` set, a PATH outside it
-  (symlinks resolved) is refused with exit 2 before anything is resolved. Prints the path.
-  **`env --runner --print-json`** (it requires `--runner`; exit 2 without, and a baseline rail
-  denies it in an agent's turn) prints `{"agent", "source", "values": {NAME: value}}` — plus the resolve
-  body's own top-level `delegated` field, only when that same resolve returned it (never `null`) —
-  on stdout and writes nothing — for a runner process's in-memory cache. **`--runner`** resolves as
-  the runner does (its token in `CANOPY_TOKEN`; canopy-web's values), naming the turn when
-  `$CANOPY_TURN_ID` is set.
-- **`refresh`** drops the cached verdicts and re-resolves `~/.X/.env`.
-- **`exec`** runs `<cmd>` with X's variables in **the child's environment only** — no
-  `~/.X/.env`, nothing exported into the session. Same decision as `check`, except that an
-  already-resolved `~/.X/.env` is not itself a reason to allow. It uses `/resolve` (with `?refs=` when `--ref` narrows it). Exits with `<cmd>`'s status.
-- **`sync`** is skipped in a turn whose runner set `$CANOPY_AGENT_ENV_FILE`. Otherwise it refreshes
-  `~/.X/.env` from canopy-web (throttled, rewritten only when the values' fingerprint moved).
-- **`google-token`** writes `~/.canopy/google-token/X.json` (0600: `access_token`, `expires_at`
-  epoch seconds, `account`) for X's own Google login and prints **only its path**. It exchanges the
-  refresh token gog holds for X's mailbox (client per `canopy email client`) and reuses the file
-  while 5+ minutes remain. A runner turn may ask only for its own agent (exit 3); a missing login
-  exits 1 naming the `gog login` to run.
-- **`google-token --delegated ACCOUNT`** is for a Google account a PERSON delegated to X (canopy-web
-  `/w/<ws>/agents/X/connect/google`: the vault entry `google-delegated-<account>`, sealed only to the
-  machines that run X). With `--runner` (the cloud runner, its own `CANOPY_TOKEN` and device proof) it
-  opens that entry from the resolve's `delegated` field, refreshes it at Google with the
-  `gog-oauth-client-web` client from the vault and writes only the access token to
-  `~/.canopy/delegated/X/google/<account>.json` (0600: `access_token`, `expires_at`, `account`,
-  `scope`); a withdrawn one removes the file (exit 3). Without `--runner` (in a turn) it prints that
-  file's path, or exits 3 when nothing fresh is staged. The runner stages it before each turn of X
-  and on its lease heartbeat, and lists the accounts in `$CANOPY_DELEGATED_GOOGLE`. Use it as
-  `gog … --access-token "$(jq -r .access_token "$(canopy cred google-token --delegated ACCOUNT)")"`.
-- **`whoami`** prints `identity: agent 'X'` (runner turn) or `identity: human (you)`, plus `why:`.
-
-No command prints a secret value; `env` and `google-token` print a path. The one exception is
-`env --print-json`, whose caller is a runner process holding the values in memory.
-
-### Calling it from an MCP server (Node/TS)
-
-```ts
-import { spawnSync } from "node:child_process";
-
-/** Refuse unless this session may act as `agent`. Never fall back to a bundled key. */
-export function assertActingAs(agent: string): void {
-  const r = spawnSync("canopy", ["cred", "check", "--agent", agent], { encoding: "utf8" });
-  if (r.error) throw new Error(`canopy CLI not available — refusing to act as ${agent}: ${r.error.message}`);
-  if (r.status !== 0) throw new Error((r.stderr || "").trim() || `not allowed to act as ${agent}`);
-}
-// Then read credentials from ~/.<agent>/.env — `canopy cred env --agent <agent>` prints its path.
-```
-
-Python: `subprocess.run(["canopy", "cred", "check", "--agent", agent], capture_output=True,
-text=True)`; non-zero → return the stderr as the tool's error text.
-
-### canopy-web routes this depends on
-
-- `GET /api/agents/{slug}/credentials/access` → `{agent, may_resolve,
-  via: "runner"|"admin"|null, reason}` — no values.
-- `GET /api/agents/{slug}/credentials/resolve` (bearer) → `{values,
-  github_token, salesforce_creds, mailbox}` — allowed for
-  runner pairs and agent owners/admins. Every canopy caller goes through one client,
-  `orchestrator/cred_resolve.py`, which adds `?refs=` when it wants a subset (re-asking once
-  without it if the server dropped a ref, so an old server and an undeclared ref both behave as
-  before), `X-Canopy-Turn-Id` when a turn is known, and a `DPoP` device proof when this machine
-  holds a registered device key (below).
-
-## Canopy Vault — the canopy-web backend
-
-```
-canopy vault status --agent X                  # per credential: set or missing, last read
-canopy vault device [--enroll|--reenroll|--refresh] [--kind K]
-canopy vault device --public-jwk [--kind software]           # {kind, jkt, jwk, created}; no canopy-web call
-canopy vault device --registered KEY_ID --runner ID [--status active|pending]
-```
-
-- **Runners** write `~/.X/.env` from `/resolve` values (`canopy agent prepare --runner`), and the
-  SessionStart hook's `cred sync` keeps it current.
-- **Device key.** `/resolve` answers 401 `device_proof_required` (for every agent; there is
-  no per-agent switch) unless the request carries a DPoP proof (RFC 9449: `typ dpop+jwt`,
-  ES256, `jwk` header; `htm`, `htu` without query, `iat`, `jti`) from an **approved** key. On a
-  Mac the key is a Secure Enclave key made by `canopy-device-key` (canopy-web
-  `runner/device-key/`, built into `~/.canopy/bin/` by the runner installer) with no
-  user-presence requirement, so unattended turns never prompt; elsewhere it is a software
-  P-256 key in `~/.canopy/device-key/sw.pem` (0600). The laptop runner enrolls it at startup
-  (`POST /api/runner-device-keys/`); a person approves the `approve_url` in canopy-web with a
-  passkey. `canopy vault device` / `status` show it.
-- **Device-key kinds.** `--kind` defaults to the strongest the machine has.
-  - **`tpm`** (Windows): a non-exportable P-256 key named `canopy-device-key` in the CNG
-    "Microsoft Platform Crypto Provider", ctypes over `ncrypt.dll`, no UI policy (never
-    prompts). Same DPoP proof. No TPM → `software`. Only `tpm.json` (a marker) is on disk.
-  - **`aws-iam`** (an EC2 box with an instance role): no key — the role IS the identity
-    (HashiCorp Vault AWS-auth). Each resolve carries `X-Canopy-Aws-Proof` = base64 JSON
-    `{method, url, headers, body}` of a SigV4-signed, **unsent** `sts:GetCallerIdentity`
-    (`POST https://sts.amazonaws.com/`, `Action=GetCallerIdentity&Version=2011-06-15`) whose
-    SIGNED headers include `X-Canopy-Proof-Htu` (the URL being called, no query) and
-    `X-Canopy-Proof-Iat` (unix seconds). canopy-web replays it to its own pinned STS endpoint.
-    Enrollment posts `{runner, kind: "aws-iam", role_arn, proof}` (the role ARN learned by
-    actually sending GetCallerIdentity once). Credentials come from IMDSv2 and stay in memory.
-    canopy-web's `runner/ec2/cloud_runner.py` carries the same stdlib signer for its own
-    resolves; both are pinned to a botocore `SigV4Auth` vector.
-- **A unit on an EC2 box uses `software`.** `ensure()` picks `aws-iam` wherever the instance
-  role answers, so a runner isolation unit asks for `--kind software` (or sets
-  `$CANOPY_DEVICE_KEY_KIND=software`). The box's pairing step collects each unit's
-  `--public-jwk`, registers them all in one `pair-by-role` call, and records each registration
-  with `--registered KEY_ID --runner ID`, so `proof_headers` sends that unit's proofs.
+- `/resolve` answers 401 `device_proof_required` (for every agent) unless the request carries a device proof from an **approved** device key (a DPoP proof, RFC 9449), or, on an EC2 box with an instance role, `X-Canopy-Aws-Proof`. A person approves a new key in canopy-web with a passkey. `canopy vault device` and `canopy vault status` show it.
+- Kinds, from the strongest the machine has (`src/orchestrator/device_key.py::KINDS`, module docstring): `secure-enclave` (macOS; no user-presence requirement, so unattended turns never prompt), `tpm` (Windows), `aws-iam` (the role IS the identity), `software` (`~/.canopy/device-key/sw.pem`, 0600). **A runner isolation unit on an EC2 box must use `software`** (`--kind software` or `$CANOPY_DEVICE_KEY_KIND=software`), because `ensure()` otherwise picks `aws-iam` wherever the instance role answers; the box's pairing step registers each unit's `--public-jwk` and records it with `--registered KEY_ID --runner ID`.
+- `$CANOPY_ECDH_BROKER=<socket>` puts the unit's ECDH key behind a root-owned KMS broker (kind `kms-broker`; it only ever answers the ECDH secret); nothing is created on disk.
 
 ### Zero-knowledge
 
-For an agent with zero-knowledge on, canopy-web holds only `zk1:` ciphertext and wrapped keys.
-The formats are canopy-web's `docs/vault/zk-v1/zk_v1_reference.py`; `orchestrator/vault_zk.py`
-reproduces its vectors byte for byte (`tests/fixtures/vault_zk/zk_v1_vectors.json`, verbatim).
+For a zero-knowledge agent canopy-web holds only `zk1:` ciphertext and wrapped keys. Formats: canopy-web's `docs/vault/zk-v1/zk_v1_reference.py`; `src/orchestrator/vault_zk.py` reproduces its vectors byte for byte (`tests/fixtures/vault_zk/`). CLI: `canopy vault zk status|enable|set|grant|rotate|settle` (`src/orchestrator/vault_zk_cli.py`).
 
-- **ECDH device key.** Beside the signing key every machine holds a P-256 key-agreement key the
-  agent's vault key (VK) is wrapped to: `se-ecdh.key` via the helper's `ecdh-create` /
-  `ecdh-public-jwk` / `ecdh-derive <epk_b64u>` (Secure Enclave, no presence), the TPM key
-  `canopy-device-ecdh` (`NCryptSecretAgreement` + `NCryptDeriveKey(BCRYPT_KDF_RAW_SECRET)`, whose
-  little-endian output is reversed), or a 0600 `ecdh.pem` for `software` and `aws-iam`. With
-  `$CANOPY_ECDH_BROKER=<socket>` (a runner isolation unit) it is the root-owned KMS broker's key
-  instead (kind `kms-broker`): one newline-delimited JSON request per connection —
-  `{"op":"public_key"}` → `{"jwk":{…}}`, `{"op":"derive","peer_jwk":{…}}` →
-  `{"secret_b64":"<Z>"}`, a failure → `{"error":"…"}` — and nothing is created on disk. It only
-  ever answers Z. Enrollment sends `ecdh_public_jwk`; an older helper or server is not an error.
-- **Resolve.** A ZK answer is `{zk: true, kv, values: {name: "zk1:…"}, wrap}`; `cred_resolve`
-  unwraps with `device_info(agent_id, kv, ecdh_jkt)` and decrypts, so `cred`, `agent prepare
-  --runner`, `cred exec` and `cred sync` see plaintext exactly as for a custodial agent.
-  `agent_id` = the answer's `agent_id` if sent, else `GET /api/agents/<slug>/`'s `id`. 409
-  `zk_wrap_missing` → "ask an admin to grant this device".
-- **Sealed values (`zks1:`).** canopy-web mints some secrets itself (Connect Google mailbox's
-  `gog-token`, a rotated `canopy-pat`) and holds no VK, so it seals each to the recipients'
-  PUBLIC keys: `"zks1:" + b64u(JSON {kv, r: [{kind: device|member, target: ecdh jkt | user id,
-  epk, ct}]})`, key = HKDF(ECDH, salt="", info=`canopy-vault/v1/seal-value|{agent_id}|{name}|
-  {kv}|{kind}:{target}`), AAD = the value AAD. `cred_resolve.open_zk` opens this device's own
-  entry, in a ZK or a custodial answer. A VK holder **settles** them — re-encrypts as `zk1:`
-  under VK, so every member reads them: `canopy vault zk settle`. The runner's Gmail token therefore works on a ZK agent: the bootstrap's
-  `fetch_web_token` goes through `cred_resolve`, which hands it plaintext.
-- **CLI, as this device** (a member through its device wrap):
-  `canopy vault zk status|enable|set|grant|rotate|settle --agent X`.
-  `enable` wraps for this device, your keyset (`GET /api/vault/keyset`) and every pending target,
-  plus recovery, and prints the recovery code once; `grant`/`rotate` list every public key they
-  will wrap to and ask first (`--yes` to skip).
-- **Give an agent a secret, without its vault key**:
-  `canopy vault zk set --sealed --agent X NAME [--yes]` and `canopy vault zk set --agent X
-  --request ID` (answer the agent's secret request). Reads `GET …/vault/zk/recipients[
-  ?secret_request=ID]` and seals `zks1` **only** to recipients carrying a valid zk-v1 §7
-  endorsement (ECDSA P-256 by a person's vault key over
-  `canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}`) from a person pinned in
-  `~/.canopy/vault-pins.json` (`{user_id: {jkt, email, pinned_at}}`, keyed by person like
-  `known_hosts`). Every thumbprint is recomputed locally (RFC 7638) — the recipient's and the
-  endorser's. A first-seen endorser is shown (email + fingerprint, and what they endorse) and
-  confirmed before pinning (`--yes` accepts; a value piped on stdin never answers the
-  question); a pinned person whose key changed stops the command, never re-pinned silently;
-  no endorsed recipient is an error, never a fallback to the server's list. Writes `PUT
-  …/vault/zk/values` (or `PUT …/secret-requests/ID/value`) and prints only `NAME stored for
-  AGENT (sealed to N readers)`. Skipped recipients get the value at the next settle.
+- Each machine holds an ECDH key the agent's vault key is wrapped to. A ZK answer is unwrapped and decrypted by `cred_resolve`, so `cred`, `agent prepare --runner`, `cred exec` and `cred sync` see plaintext exactly as for a custodial agent. A 409 `zk_wrap_missing` means an admin must grant this device.
+- **Sealed values (`zks1:`).** Secrets canopy-web mints itself (a Connect Google mailbox's `gog-token`, a rotated `canopy-pat`) are sealed to recipients' PUBLIC keys because canopy-web holds no vault key. `cred_resolve.open_zk` opens this device's entry; a vault-key holder **settles** them into `zk1:` with `canopy vault zk settle` so every member reads them.
+- **Giving an agent a secret without its vault key** (`vault zk set --sealed`, or `--request ID`): the CLI seals `zks1` **only** to recipients carrying a valid zk-v1 §7 endorsement from a person pinned in `~/.canopy/vault-pins.json` (keyed by person, like `known_hosts`). It recomputes every thumbprint locally; a first-seen endorser is shown and confirmed before pinning (a value piped on stdin never answers the question); a pinned person whose key changed stops the command and is never re-pinned silently; no endorsed recipient is an error, never a fallback to the server's list. Skipped recipients get the value at the next settle.
 
-## Local use: a private runner, a license, a local turn
+## Local use: a private runner, a licence, a local turn
 
-A person who is not an agent's admin may still run the agent in their **own** Claude Code,
-with its skills and logins, and canopy keeps the record:
+A person who is not an agent's admin can run the agent in their **own** Claude Code, and canopy keeps the record. `canopy agent use <slug>` (`src/orchestrator/agent_use.py`) sets it all up idempotently and reports ok / done / NEEDS YOU per step.
 
-`canopy agent use <slug>` (`agent_use.py`) sets all of this up in one idempotent command
-and says ok / done / NEEDS YOU for each step (sign-in, this computer, device key, the vault
-grant, licence, plugin, `$CANOPY_AGENT`, env). Underneath:
+1. **This computer is registered for local use** (`src/orchestrator/local_cli.py::register_this_computer`; canopy-web calls it a *private runner*), recorded in `~/.canopy/private-runner.json`. A runner set private takes no fleet work, only its owner's pins and bound sessions, and signs in with its device key instead of a PAT. Acting at a lower role is per turn or per client (`CANOPY_ACTS_AS`), never a machine setting.
+2. **`$CANOPY_AGENT`** is set for the project (`.claude/settings.local.json`).
+3. Each session is a **local turn**. `agent_session_start.py` (SessionStart) runs `canopy local open` FIRST: canopy-web issues the **licence** when the agent's caller list gives the person the whole agent (else 403, recorded for its admins), opens a RUNNING `origin=local` turn, and the hook exports `CANOPY_TURN_ID`, so the credential reads that follow name the turn and go out under the licence (`via=license` in the read log). `caller_context.py` shows the envelope on the first prompt and renews the lease; `local_turn_sync.py` streams the transcript while the session runs (`CANOPY_LOCAL_LIVE_TRANSCRIPT=0` turns that off; the close still uploads everything); `local_turn_close.py` (SessionEnd) uploads the rest and finishes the turn.
 
-1. **This computer is registered for local use** (`local_cli.register_this_computer`, as
-   yourself). canopy-web calls the record a **private runner**: Claude Code with the canopy
-   plugin. The machine may also run the runner app: a runner set private (`canopy
-   private-runner set private`) takes no fleet work, only its owner's pins and bound
-   sessions, and its local sessions sign in with its device key instead of a PAT. Acting as a lower role is per turn or per client (`acts_as`,
-   `CANOPY_ACTS_AS`), never a setting on the machine.
-   `~/.canopy/private-runner.json` records it; `canopy private-runner register` is a hidden
-   alias.
-2. **`$CANOPY_AGENT`** is set for the project (`.claude/settings.local.json`; an agent repo's
-   own `.claude/settings.json` sets it too). `canopy local use` is an alias of `agent use`.
-3. Each session there is a **local turn**. `agent_session_start.py` (SessionStart) runs
-   `canopy local open` FIRST: canopy-web issues your **license** when the agent's caller
-   list gives you the whole agent (else 403, and the request is recorded for its admins),
-   opens a RUNNING `origin=local` turn, and the hook exports `CANOPY_TURN_ID` — so the
-   credential reads that follow (`cred sync`, `cred env`) name the turn and
-   go out under the license (`via=license` in the read log). `caller_context.py` shows the
-   turn's envelope on the first prompt (it carries the asker's `permissions` and, for a `manual_only` caller, a manual turn mode) and renews its lease;
-   `local_turn_sync.py` streams the transcript up WHILE the session runs (`canopy local
-   sync`: after every reply, and at most once a minute between tool calls; only whole
-   lines, from the offset last sent), so a live local session can be read on canopy-web;
-   `local_turn_close.py` (SessionEnd) runs `canopy local close`, which uploads the rest
-   and finishes the turn. `CANOPY_LOCAL_LIVE_TRANSCRIPT=0` turns the streaming off (the
-   close still uploads everything).
+A licence read never carries the agent's own canopy login, its owner's GitHub delegation, a lent credential or the shared vault key. A runner's own sessions are not eligible (`$CANOPY_TURN_ID` already set, a confined `cx-` session, a headless-engine session `CANOPY_HEADLESS` / `CANOPY_ONE_SHOT_TURN`, a desktop-engine worktree `<cwd>/.canopy-desktop/`, an emdash session on a machine that runs the runner app): `agent_session_start.py::RUNNER_ENV_MARKERS` and neighbours decide.
 
-A license read never carries the agent's own canopy login, its owner's GitHub delegation,
-a lent credential or the shared vault key. Not eligible: a runner's turn (`$CANOPY_TURN_ID` already
-set), a confined `cx-` session, a session the runner app's headless engine started
-(`CANOPY_HEADLESS` / `CANOPY_ONE_SHOT_TURN`), one in a desktop-engine worktree
-(`<cwd>/.canopy-desktop/`), and an emdash session on a machine that runs the runner
-app (`~/.canopy/runner.json`) — those are the runner's turns already.
-
-A session idle past the 8-hour lease finds its turn swept `lost`: the next prompt's
-`canopy local renew` sees the turn is no longer running, opens a new local turn for the
-same session, appends its `CANOPY_TURN_ID` to the session's env file and shows its
-envelope. A session that died without SessionEnd is finished `failed` by the next
-session's `canopy local open` (catch-up), not `done`.
+A session idle past the 8-hour lease (`local_cli.py::STALE_AFTER`) finds its turn swept `lost`; the next prompt's `canopy local renew` opens a new local turn for the same session. A session that died without SessionEnd is finished `failed` by the next session's `canopy local open`, not `done`.

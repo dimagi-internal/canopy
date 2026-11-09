@@ -1,7 +1,6 @@
 # Moving an OpenClaw agent onto canopy — who does what
 
-**Who this is for:** the person whose agent runs on an OpenClaw droplet today and is moving to
-canopy — Andrea with **Jarvis**, Shayoni with **Fizzy**, and the next round after them.
+**Who this is for:** the person whose agent runs on an OpenClaw droplet and is moving to canopy.
 
 You do not have to do the migration yourself. **Hal does the bulk of it.** Your part is the
 handful of steps that need *you* — your laptop, your logins, your judgment about what the agent
@@ -18,7 +17,7 @@ is for. This page says which is which, in order.
 | Today (OpenClaw) | After (canopy) |
 |---|---|
 | Email the agent's `@dimagi-ai.com` address | **Same address, same behaviour.** |
-| **Telegram** bot | **Gone.** Canopy has no Telegram channel today (email, Slack and canopy-web chat only — see [the operating model](agent-operating-model.md), "Channels over time"). Tell your Telegram users before the switch. |
+| **Telegram** bot | **Gone.** Canopy has no Telegram channel adapter (see "Channels" in [the operating model](agent-operating-model.md)). Tell your Telegram users before the switch. |
 | One always-on process on a droplet | Turns run in Claude Code on **your machine** (or a cloud runner); every turn is visible on canopy-web. |
 | Sends whenever it decides to | Outbound email is **drafted and waits for your approval** by default (turn mode `manual`), and hard rails block the raw send paths. |
 | Memory, persona and skills live only on the droplet | They live in a **git repo** you control (`dimagi-internal/<slug>`), so nothing is lost when the droplet goes away. |
@@ -40,8 +39,8 @@ the snapshot once in Hal's session). Then Hal:
 3. **Tidies what came across**: distils the raw persona into `persona.md`, reviews each ported
    skill (keeps the good ideas, rewrites them to canopy conventions), and sets the agent's gating
    rails — including the one that forces all email through the approval path.
-4. **Registers the agent on canopy-web** in its division's workspace (Jarvis → `connect`) and
-   mirrors its skills, so its page exists at `/canopy/w/<workspace>/agents/<slug>` with this
+4. **Registers the agent on canopy-web** in its division's workspace and
+   mirrors its skills, so its page exists at `/w/<workspace>/agents/<slug>` with this
    checklist on its board.
 5. **Makes you an editor (or owner) of that workspace** — you get an invite link.
 
@@ -60,19 +59,18 @@ steps 3–6 with you.
    (the "push it to GitHub" step is already done; start at installing the plugin) and
    [§5](onboarding-a-new-operator.md#5-make-it-real--let-agent-doctor-drive).
 4. **Re-authorise the mailbox.** The agent's Gmail consent does not move off the droplet —
-   you (or Jonathan, who set the accounts up) sign in as `<slug>@dimagi-ai.com` once when
+   you (or whoever holds the dimagi-ai.com accounts) sign in as `<slug>@dimagi-ai.com` once when
    `canopy agent doctor` asks for it. **On Windows**, read
-   [§5a](onboarding-a-new-operator.md#5a-mailbox-setup-on-windows--four-things-that-bite)
+   [§5a](onboarding-a-new-operator.md#5a-mailbox-setup-on-windows)
    first. If Google refuses the sign-in with *"couldn't verify this account belongs to you"*,
    a dimagi-ai.com admin has to lift the login challenge for that account for a few minutes.
-   Ask Jonathan.
 5. **Run `canopy agent doctor --repo .` until it is all green.** It names every remaining fix.
    Anything it cannot explain is a bug — email it to hal@dimagi-ai.com.
 6. **Run the first turn yourself**: `/<slug>:turn` — [§7](onboarding-a-new-operator.md#7-your-first-turn).
 
 ### Phase 3 — Only if you want email to trigger turns on its own
 
-Install the runner on your machine — [§6](onboarding-a-new-operator.md#6-the-runner--including-on-windows).
+Install the runner on your machine — [§6](onboarding-a-new-operator.md#6-letting-it-run-on-its-own--a-runner-macos-and-windows).
 Until you do, the agent works whenever you run a turn; it just does not wake up by itself.
 
 ### Phase 4 — Retire the droplet (Hal, once you say so)
@@ -86,10 +84,5 @@ never copied anywhere.
 
 ## Where each agent is
 
-The live status of each move is on that agent's board on canopy-web — the checklist above, as
-tasks, with whose turn it is. Start there, not here.
-
-| Agent | Operator | Workspace | Board |
-|---|---|---|---|
-| Jarvis | Andrea King | `connect` | [/w/connect/agents/jarvis](https://canopy.dimagi.com/w/connect/agents/jarvis) |
-| Fizzy | Shayoni Mazumdar | `strategy` (when Shayoni registers it) | repo exists; Shayoni is mid-way through Phase 2 on Windows |
+The live status of each move is on that agent's board on canopy-web (`/w/<workspace>/agents/<slug>`):
+the checklist above, as tasks, with whose turn it is. Start there, not here.

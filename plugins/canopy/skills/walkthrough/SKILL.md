@@ -210,7 +210,7 @@ prewarm: true                   # default: false — visit every unique scene UR
 review_mode: autonomous
 
 # Target rubric (optional, DDD-only) — what the DDD loop converges on: outcomes
-# with pass conditions + which judge dimensions block (canopy#790; authoring in
+# with pass conditions + which judge dimensions block (authoring in
 # ddd-spec "target_rubric:"). The recorder ignores it.
 # target_rubric: {pass_score: 3, blocking_dimensions: [task_completion], outcomes: [...]}
 
@@ -553,8 +553,7 @@ subset — see **Scene filter**):
    class names the page's readable stylesheets actually define. It exists
    because everything else here is TEXT, and text cannot tell you that the
    element carrying a claim rendered at zero height or that its label is white
-   on white — three such defects scored 9/9 on every text lens across four
-   iterations of one run (canopy#525). `scripts/ddd/visual_geometry` is the
+   on white, so such defects score full marks on every text lens. `scripts/ddd/visual_geometry` is the
    lens that reads it; you do not normally read it by hand. Capture is
    best-effort: if the page's `evaluate` fails the file is simply absent and
    the lens reports `skip`, so its absence never means "clean".
@@ -565,7 +564,7 @@ subset — see **Scene filter**):
    like `66.0%`, multi-word names, `${var}` values), with its DOM text, state
    attributes and box in frame pixels. DDD's judge scope fingerprints these
    regions so a template edit that leaves a scene's subject alone does not
-   re-judge it (canopy#780). Best-effort like the visual capture: absent means
+   re-judge it. Best-effort like the visual capture: absent means
    the judge scope compares the whole frame.
 
    **If a captured screenshot is absurdly tall (10,000+ pixels):** This is a
@@ -611,10 +610,9 @@ subset — see **Scene filter**):
    and returns a verdict object with per-dimension scores + adversarial
    listing + projector test result + fix recommendation. Walkthrough's
    5 dimensions live in `rubric.yaml` (Content / App Page / Screenshot
-   / Slide / Demo Readiness). The methodology was extracted from this
-   skill into `canopy:visual-judge` in v0.2.79; per-rubric scoring
-   conventions (start-from-3, weakest-link overall, projector-gate)
-   are preserved verbatim.
+   / Slide / Demo Readiness). The methodology lives in
+   `canopy:visual-judge`; per-rubric scoring conventions (start-from-3,
+   weakest-link overall, projector-gate) are defined there.
 
    **Blocking-rule handling.** If the verdict comes back with
    `verdict: "blocked"` (either Demo Readiness ≤ 2, or scene-1/2
@@ -834,7 +832,7 @@ enabled, and in one pass produces **all** of:
 
 There is no separate after-scoring video pass: the video, the screenshots
 the judge scores, and the deck all come from this SAME capture, so they
-can never desync. The spec's `record_video: true` no longer gates whether
+can never desync. The spec's `record_video: true` does not gate whether
 the engine runs (it always does — it's how the manifest is produced); it
 signals that the mp4 is a deliverable to surface to the user alongside the
 deck. The webm is converted to mp4 via ffmpeg.
@@ -875,7 +873,7 @@ Rules that make it work:
 A `scroll_to` immediately followed by a `fill` on the same target is collapsed to
 one mark (the `fill`), so only the acting action needs the hint.
 
-**A `scroll_to` that cannot move the page is a spec problem, and it now says
+**A `scroll_to` that cannot move the page is a spec problem, and the recorder says
 so.** Centring a target needs `scrollTop = y + scrollY - innerHeight/2`. For a
 target in the top half of the page that is negative; the browser clamps it and
 the page does not move. The action still reports `ok: true` — it is a
@@ -884,7 +882,7 @@ element is a fine thing to write — but the scene then captures whatever screen
 the camera was last left on, several scenes back if that is where it stopped.
 A frame like that looks completely legitimate and is of the wrong thing.
 
-The recorder now clamps the scroll and records a `warning` on the action,
+The recorder clamps the scroll and records a `warning` on the action,
 visible in `run-report.json` and in the per-scene action trace the judges read:
 
 ```
@@ -1040,8 +1038,8 @@ actions:
 A bare text target that is only PART of a larger node ("Rijiyar Kwara" inside
 "Rijiyar Kwara (Kano)") resolves as fast as `text:` — the resolver waits once
 on the substring match and prefers an exact match only through a non-blocking
-probe. (Before canopy#912 it waited out a ~3 s exact-match timeout first, which
-pushed every later beat of a `style: recorded` cut off its spoken word.)
+probe (an exact-match wait would push every later beat of a `style: recorded`
+cut off its spoken word).
 
 **`--snapshots` stays out of the film.** A full-page per-scene capture resizes
 the live viewport, so the master clip shows the page shrunk onto grey for ~1.5 s.
@@ -1272,8 +1270,7 @@ global preset, set on an individual scene (not the whole video like `video_pace`
 
 - **`teach`** (default — absent `pace:` is `teach`) — explain the mechanic. Full
   read-time pacing, because the viewer is meeting this UI/concept for the first
-  time. Identical to behavior before this field existed; every existing spec is
-  all-teach and records byte-for-byte the same.
+  time. A spec with no `pace:` anywhere is all-teach.
 - **`flow`** — the feature is already established and this beat just shows
   **continuity** (navigate there, glance, move on). The recorder compresses the
   scene: blind holds/settles clamped to a ~600ms ceiling, the post-nav settle
@@ -1307,8 +1304,8 @@ precedence order:
 
 Two knobs that look like dwells but aren't: `min_hold_ms` only floors the
 *reported* per-scene seconds (the "~Ns of footage" accounting) — it does not
-pad the film; `scroll_speed_px_s` is dead (unconsumed since the static-scene
-scroll-pan fallback was removed) and retained only for back-compat.
+pad the film; `scroll_speed_px_s` is unconsumed (kept only for config
+back-compat; see `scripts/walkthrough/_lib/config.py`).
 
 ### Data setup + `${var}` substitution (specs with a `setup:` block)
 
@@ -1416,7 +1413,7 @@ Semantics:
 
 > **Dependency note.** The engine (`record_video.py`) needs **playwright +
 > a chromium download** — a heavy dependency that `/canopy:setup` does
-> **not** install. Because the engine is now the single source of the
+> **not** install. Because the engine is the single source of the
 > manifest + screenshots (not just the mp4), this dependency is required
 > for the whole flow, not only for video. On a portable install without
 > it, the script exits with the exact install command. Run it once against
@@ -1530,7 +1527,7 @@ When invoked as `/walkthrough generate`:
 1. Ask the user what feature or demo they want to walk through.
 2. Check for existing design docs:
    ```bash
-   grep -rl "Demo Narrative\|walkthrough\|demo" docs/plans/ docs/designs/ 2>/dev/null
+   grep -rl "Demo Narrative\|walkthrough\|demo" docs/designs/ 2>/dev/null
    ```
 3. If found, use it as the starting point. If not, ask the user to describe the scenes.
 4. For each scene, ask: What persona? What should be shown? What makes it impressive?

@@ -63,11 +63,11 @@ Each project briefing:
 - **content**: markdown, **three `## ` sections, each a short bulleted list** (not
   prose paragraphs — the feed renders each `## ` heading as a labeled, divider-separated
   block, so bullets read far more clearly than walls of text):
-  - `## What shipped` — bullets, each a concrete shipped thing; bold the lead term, cite the PR (`- **X** — … (#123)`).
+  - `## What shipped` — bullets, each a concrete shipped thing; bold the lead term, cite the PR (`- **X** — … (<PR number>)`).
   - `## Why it matters` — 1–3 bullets: the problem / the decision (mine the prompts for intent).
   - `## How to leverage it` — bullets: what a teammate can now do, reuse, or build on; gotchas.
   Keep bullets to a line or two. Avoid multi-sentence paragraphs.
-- **links**: the *highlight* PRs (`{"label": "PR #83 — title", "url": "..."}`), 2–4 most
+- **links**: the *highlight* PRs (`{"label": "PR <number> — title", "url": "..."}`), 2–4 most
   relevant first. The full PR list is attached automatically in step 3 (don't hand-copy it).
 
 Then write **one roll-up** across all projects: the 2–4 threads that tie the period

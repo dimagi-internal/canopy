@@ -182,8 +182,8 @@ def test_mcp_rail_leaves_everything_else_alone(tool, inp):
 
 def test_every_rail_names_the_right_path_not_just_the_wrong_one():
     """Rails, not gates: a block must tell the agent what to do instead, or it just stalls
-    the turn. (agent-operating-model §1a; and Eva's 2026-07-30 learning that a rail can be
-    right about the risk and wrong about the remedy.)"""
+    the turn. (docs/agent-operating-model.md § Invariants: a rail can be right about the
+    risk and wrong about the remedy.)"""
     for r in RAILS:
         msg = r["message"]
         assert "BLOCKED" in msg

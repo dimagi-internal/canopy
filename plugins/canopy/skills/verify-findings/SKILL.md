@@ -20,9 +20,9 @@ mode of the May 1 ace review: 11 of 17 findings were already in `main`
 at versions `0.10.56`–`0.10.69` before the user saw the table.
 Implementing them again would have been wasted work.
 
-## What this skill does (canopy ≥ v0.2.78)
+## What this skill does
 
-**This is now a CLI command.** The verification algorithm lives in
+**This is a CLI command.** The verification algorithm lives in
 `src/orchestrator/verify_findings.py` and is invoked deterministically
 via `canopy verify-findings`. The skill body below is a thin wrapper —
 its only job is to invoke the CLI with the right arguments and report
@@ -77,8 +77,7 @@ ad-hoc invocations.
 
 ## What the CLI does
 
-The implementation mirrors the algorithm this skill used to describe in
-prose, but in deterministic Python:
+The implementation is deterministic Python:
 
 1. **Load proposals** matching the supplied prefixes (or all `pending`).
 2. **Group by `target_repo`**, resolving each via
@@ -87,8 +86,9 @@ prose, but in deterministic Python:
    Proposals whose target isn't on this machine immediately get verdict
    `unverifiable: target repo not on this machine`.
 3. **Build evidence corpus per repo:** fetch origin/main, capture the
-   last 14 days of commits, read CHANGELOG.md head, grep the tree for
-   backtick-quoted symbols mentioned in the proposals' `action` /
+   recent commits, read the target repo's CHANGELOG.md head when it has
+   one (absent is fine), grep the tree for backtick-quoted symbols
+   (all in `src/orchestrator/repo_evidence.py`) mentioned in the proposals' `action` /
    `motivation`.
 4. **One claude -p call per repo** with the corpus + the repo's
    proposal batch — returns a YAML list of verdicts, one per proposal.
@@ -104,7 +104,7 @@ prose, but in deterministic Python:
    ------------------------------------------------------------------
    shipped        85cbef676ae2   0.10.77 (d968d2e); CHANGELOG hits
    partial        fbeac13427d4   0.10.64 chose HTMX fallback instead
-   open           a7f633e915cb   no commit since 2026-05-01; grep ✓
+   open           a7f633e915cb   no recent commit touches it; grep ✓
    ```
 
 ## Honest limits

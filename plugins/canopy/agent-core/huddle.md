@@ -22,7 +22,7 @@ project page or the huddle page.
 **The conversation is not stored — it is derived.** Each round is a one-shot turn the engine
 tags (`origin_ref.kind = huddle_round`) and parents on the huddle's anchor turn; canopy-web reads
 the prompt, the member's reply block and the resulting tasks back out of those tags and shows them
-at `/w/<ws>/huddles/<id>`. The only new write is the clean-outcomes record in the leader's Drive
+at `/w/<ws>/huddles/<id>`. The only write of its own is the clean-outcomes record in the leader's Drive
 (`Process State/Huddles/<id>.json`), which the next huddle reads so a declined item is not
 re-raised without new evidence.
 
@@ -47,8 +47,8 @@ Work in a scratch directory; `priorities.md`, `plan.json`, the prompts, `crit.js
   block as their close-out.
 - **The whole huddle runs where you run.** `plan --runner` (default `caller`) pins every round —
   and, through `agree`'s printed `run` lines, every agreement thread — to the runner your turn is
-  on. Never leave it to each member's own routing: on 2026-10-14 ada led from the cloud and ace's
-  rounds landed on the principal's laptop, because ace follows its workspace's default order.
+  on. Never leave it to each member's own routing: a member follows its workspace's default
+  order and can land on a different machine than the one you lead from.
   Pass `--runner <name>` only when asked to run a huddle somewhere else (e.g. to debug on a
   laptop); `--runner none` = default routing, on request only.
 - **Never background a wait, never end your turn while a round is out.** `await` runs in the
@@ -69,8 +69,7 @@ never start a second one beside it. `{"huddle": null}` → step 1.
 reads the principal's goals). Format: a numbered list, 3–5 items, each
 `N. <priority, one line> — hard dates: <dates or none> — source: <where it comes from>`, plus an
 optional `Not now:` line; themes and dates only, nothing restricted. Never write one yourself
-from guesses — the point is that nobody guesses (huddle work-fleet-20261006: 3 of 4 members had
-not read the goals and produced four different priority lists).
+from guesses — the point is that nobody guesses (members that guess produce divergent priority lists).
 ```bash
 uv run --project "$CANOPY_ROOT" canopy huddle plan --team <team> --type work --members <a,b,c> \
   --days 7 --principal "<name>" --sharing-rule "<the binding's rule, verbatim>" \
@@ -118,20 +117,18 @@ Then for every member that replied: `prompt --round 2 --critique crit.json`,
 `dispatch --round 2`, foreground `await --round 2`. A round-2 proposal names a brief priority by
 NUMBER, a `kind`, `cost_to_jonathan` (none / yes / decision / time + detail) and `fails_if`
 (no confidence %), with ordered, UNDATED plan steps (agents can do unlimited work, so a schedule of agent work tells
-the principal nothing — Jonathan, 2026-10-12; `too_late` only when the work misses a brief hard date).
+the principal nothing; `too_late` only when the work misses a brief hard date).
 A proposal to do work an agent should own as part of its standing job is the wrong shape: the
-proposal is to self-improve that agent so it happens every time (Jonathan, 2026-10-12: "Eva should
-know as part of her chief of staff duties to make sure I'm prepped and ready for the trip … the
-huddle proposal should have been to self-improve Eva"). Crit questions in step 3 should name any
-such proposal.
+proposal is to self-improve that agent so it happens every time. Crit questions in step 3 should
+name any such proposal.
 
 **4. Round 3 — merge duplicates, then co-sign.**
 
 **4a. Merge duplicates (after round 2, before any round-3 prompt).**
 `canopy huddle proposals --huddle <id> --out props.json` marks each proposal's `overlaps`: other
 proposals for the same brief priority that share a person (lead or `with`). Two of those are
-usually ONE piece of work (work-fleet-20261006: Ace's and Eva's IDM-demo proposals were the same,
-both were co-signed and filed, and the principal had to decline one). Resolve every overlap in
+usually ONE piece of work (left unmerged, both are co-signed and filed and the principal has to
+decline one). Resolve every overlap in
 `merges.json`:
 ```json
 {"<kept title>": {"absorbs": ["<title>", "…"], "why": "one line"},
@@ -178,9 +175,9 @@ on the table is adopted), **not agreed** on a `decline`, out of messages, or out
 closed. `canopy thread show --thread <id>` prints the conversation; it is also on the huddle page.
 Every thread must be closed before step 5 — an amend whose thread is still open is held.
 
-(The relayed round 4 — `prompt`/`dispatch --round 4`, where the lead answers `accept`/`reject` —
-still works and `proposals` still reads it, but threads replace it: use it only if canopy-web's
-threads API is unavailable.)
+(Fallback only: the relayed round 4 — `prompt`/`dispatch --round 4`, where the lead answers
+`accept`/`reject` — which `proposals` also reads. Use it only if canopy-web's threads API is
+unavailable.)
 
 **5. Rank, file.** `canopy huddle proposals --huddle <id> --merges merges.json --out props.json`
 again (it now

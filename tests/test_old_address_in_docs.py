@@ -24,8 +24,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OLD = re.compile(r"labs\.connect\.dimagi\.com/canopy(?![-\w])")
 NEW = "canopy.dimagi.com"
 
-# Dated records of what was planned or decided at the time — not instructions.
-HISTORY = ("docs/archive/", "docs/superpowers/", "docs/plans/")
+# Directories that hold no current docs (kept so a stray one is not scanned).
+HISTORY = ("docs/archive/",)
 
 
 def _markdown_files() -> list[str]:

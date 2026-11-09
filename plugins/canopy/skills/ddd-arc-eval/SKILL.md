@@ -43,7 +43,7 @@ arc judged over a broken take measures the take, not the arc.
 
 Then run the duplicate-frames lens **through the canopy runtime** — it imports numpy and
 pillow, which live in the runtime's venv, not in whatever bare `python` is on PATH (a bare
-`python` dies on the import, canopy#569):
+`python` dies on the import):
 
 ```bash
 _CANOPY_PLUGIN="$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/plugins/installed_plugins.json'))); print(d['plugins']['canopy@canopy'][0]['installPath'])")"
@@ -59,14 +59,11 @@ of the range, so the browser clamped it. Either way it scrolls zero pixels, does
 not fail, and the scene films whatever screen the camera was last left on —
 which is frequently several scenes back, not the one immediately before.
 
-That is why the comparison is all-pairs. The narrower consecutive-only version
-called `pass` on
-`hh-poverty-targeting-answer-quality-2026-08-29-001`, whose scenes 3 and 5 are
-byte-identical while every adjacent pair in it differs by more than 27%. An arc
-judge found it by hand instead — twice, on two different runs — which is the
-tell that the mechanical check was looking through a keyhole. A deliberate
-callback to an earlier screen will now be reported too; the output names the
-pair and how far apart it is, so dismissing one is a glance.
+That is why the comparison is all-pairs: a consecutive-only check calls `pass`
+on a run whose scenes 3 and 5 are byte-identical while every adjacent pair
+differs by more than 27%. A deliberate callback to an earlier screen is
+reported too; the output names the pair and how far apart it is, so dismissing
+one is a glance.
 
 This is worth a gate rather than a finding because the rubric prices it at a hard
 cap — *"two scenes make the same point with different pixels: max 2"* — so a run
@@ -163,7 +160,7 @@ Explicitly instruct the judge:
 > concept judge. A run of individually-flawed scenes can still have an
 > excellent arc, and a run of perfect scenes can have none.
 
-And instruct it to **seal its own result as its last act** (canopy#548): write
+And instruct it to **seal its own result as its last act**: write
 its full judgement to `<run_dir>/passes/arc/arc-1.md`, then run
 `(cd <DDD_REPO> && uv run python -m scripts.ddd.passes seal <abs run_dir>/passes/arc/arc-1.md)`.
 The sub-agent does not inherit your shell, so put the resolved absolute paths in
@@ -176,12 +173,9 @@ DDD_REPO="$(bash "$_CANOPY_PLUGIN/scripts/canopy-runtime.sh")" || { echo "ERROR:
 ```
 
 Non-zero exit means the judge did not return — **re-dispatch it as `arc-2`; do
-not write the verdict yourself.** On
-`hh-poverty-targeting-answer-quality-2026-08-27-001` the first arc judge stalled
-with no result event and a verdict was written anyway: well-formed, plausibly
-scored, and landing on the same five scores as the real judge that later
-replaced it, so nothing downstream could have told them apart. You never write
-under `passes/`. If the judge cannot be made to return, write `verdict: blocked`
+not write the verdict yourself.** A verdict written for a stalled judge is
+well-formed and plausibly scored, so nothing downstream can tell it from a real
+judge's. You never write under `passes/`. If the judge cannot be made to return, write `verdict: blocked`
 naming it.
 
 ### Step 3 — Findings
@@ -231,11 +225,11 @@ verdict: pass | warn | fail
 
 `<run_dir>/arc_findings.json` — the findings array from Step 3.
 
-### Step 4b — Gate both outputs before you report (canopy#547, #548)
+### Step 4b — Gate both outputs before you report
 
 **Do not skip this because the files "look right".** Your work is done at this
 point and the whole cost of the dispatch is already paid; a field outside the
-contract now costs the entire run, and it surfaces far downstream as an
+contract costs the entire run, and it surfaces far downstream as an
 assembly error that reads like a run failure rather than a schema one.
 
 `fix_kind` is not a label here — `compute_auto_iterate` **dispatches** on it.
@@ -284,9 +278,9 @@ the single most important signal this lens produces.
 ## Storyboard mode (pre-build — the locked narrative, no screenshots)
 
 Run once per run, on the LOCKED narrative, in parallel with `ddd-gap-walk` and
-before the first build or render. The first live v1 run learned "move this
-scene" and "the data is too small to make the point" at iteration 4, after six
-fix batches; none of it needed pixels.
+before the first build or render. Findings like "move this
+scene" or "the data is too small to make the point" need no pixels, and
+discovering them after several fix batches is wasted work.
 
 **Inputs:** the composed spec (scenes in `build_order`: title, `narrative`,
 `concept_claim`, `persona`, `features[]`, `actions`), the why-brief, and the

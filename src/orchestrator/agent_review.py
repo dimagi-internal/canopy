@@ -1,11 +1,11 @@
 """Agent self-improvement lens — point canopy's analyze→propose loop at an agent's turns.
 
-Build 2 of docs/agent-operating-model.md: the active learning loop reef never had. Reviews an
+The self-improvement lens of docs/agent-operating-model.md. Reviews an
 agent's recent TURN transcripts for operating-model friction — dropped checklist steps, tool
 failures/retries, gating blocks, repeated manual work that should be a skill — and produces
 findings + recommended fixes scoped to the agent's repo (skill edit / hook rule / CLAUDE update /
 channel fix). The deterministic friction extraction is the testable core; an optional claude -p
-pass synthesizes ranked findings on top of it (the evaluator–optimizer step, §6.3).
+pass synthesizes ranked findings on top of it (the evaluator–optimizer step).
 
 Reuses the existing machinery: transcripts.py (parse/extract), repo_paths.py (resolve), and the
 analyzer's claude -p pattern. It does NOT fork the pipeline — it's a lens on the same loop.

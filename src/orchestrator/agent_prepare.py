@@ -4,7 +4,7 @@
                          [--env-only] [--report] [--json]
     canopy agent bootstrap [--slug …]          # a PERSON's laptop: the same steps, person mode
 
-WHY ONE IMPLEMENTATION (docs/architecture/agent-setup-lifecycle.md phase 2).
+WHY ONE IMPLEMENTATION (docs/architecture/agent-setup-lifecycle.md).
 Preparing an agent had five homes: canopy-web's runner/ec2/bootstrap_agents.sh (1,400 lines
 of bash, a fleet-wide batch at box start), cloud_runner.py's per-claim patches (env refresh,
 lazy clone, pull), this module's laptop twin, `canopy agent env`, and an unwired runtime

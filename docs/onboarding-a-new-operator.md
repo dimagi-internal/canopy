@@ -59,7 +59,7 @@ already-running shells. On macOS/Linux: `brew install gogcli` (it is in homebrew
 nothing private to request access to).
 
 You also need **membership in the `dimagi-internal` GitHub org** and a
-**canopy-web login**. Ask Jonathan for both if `gh repo list dimagi-internal`
+**canopy-web login**. Ask a Dimagi canopy admin for both if `gh repo list dimagi-internal`
 comes back empty.
 
 > **Python note:** canopy targets Python 3.11+. You do not need to install Python
@@ -122,45 +122,30 @@ Two things live here, and mixing them up is the most common early confusion.
 
 ### 3a. Your workspace ("team")
 
-A **workspace** is canopy-web's tenant — the "team" whose agents, tasks and work
-products you can see. An agent lives in exactly one workspace **at a time**, but
-that is not irreversible: setting an explicit `workspace` on an
-already-homed agent **moves** it (`apps/agents/schemas.py`), so this is a
-reversible decision, not a commitment.
+A **workspace** is canopy-web's tenant: the "team" whose agents, tasks and work products you can see. An
+agent lives in exactly one workspace **at a time**, and the choice is reversible: setting an explicit
+`workspace` on an already-homed agent **moves** it (`canopy agent move --slug <x> --to <ws> --dry-run`
+lists what moves, what stays and what will stop working, e.g. a mail address on a domain the new
+workspace cannot use; `canopy agent register --slug <x> --workspace <ws>` runs the same move).
 
-**Do NOT just take the default** — this is the one choice in this doc worth
-thirty seconds of thought, because the default is the least private option.
-
-You have three, and they differ in exactly the way that matters:
+Which workspace is the one choice here worth thirty seconds of thought:
 
 | Workspace | Who gets in | Notes |
 |---|---|---|
-| `dimagi` | **any `@dimagi.com` address may self-join, and lands as an EDITOR** | the default a new agent lands in |
-| **your division** — `connect`, `strategy`, `operations`, `commcare`, `global-solutions` | no self-join — membership is by invite; each has its own admins | **the usual answer** for an agent that belongs to a team. To see where an existing agent lives, read `workspace` off its record (the `get_agent` canopy-web MCP tool, or `GET /api/agents/<slug>/`) rather than assuming |
-| **your own** | nobody until you invite them; you are the owner | one API call, below |
+| `dimagi` | a `@dimagi.com` login may **request** access; an admin approves, or the workspace's auto-approve role grants it | the widest audience; everyone it admits can see the agent's board |
+| **your division**: `connect`, `strategy`, `operations`, `commcare`, `global-solutions` | by invite or an approved request; each has its own admins | **the usual answer** for an agent that belongs to a team. To see where an existing agent lives, read `workspace` off its record (the `get_agent` canopy-web MCP tool, or `GET /api/agents/<slug>/`) rather than assuming |
+| **your own** | nobody until you invite them; you are the owner | the only one that starts empty and stays that way |
 
-**Workspaces nest.** The divisions sit *under* `dimagi`, and the tree grants exactly one thing:
-an **owner** of a workspace is an owner of everything below it (so Dimagi's owners can administer
-every division). Nothing else flows down — `dimagi`'s self-joined editors see **nothing** in a
-division workspace. That is why a division is the right home: private to its team, still
-administrable from the top. Pass `"parent": "dimagi"` when creating a workspace to nest it
-(you must own the parent); the rules are in canopy-web's `docs/architecture/roles.md`.
+**Workspaces nest.** The divisions sit *under* `dimagi`, and the tree grants one thing: an **owner or
+admin** of a workspace holds that role in everything below it (`WorkspaceMembership.INHERITS_DOWN` in
+canopy-web). Nothing else flows down, so a member of `dimagi` sees **nothing** in a division workspace.
+That is why a division is the right home: private to its team, still administrable from the top. Nest a
+new workspace by passing `parent` when creating it (you must own the parent). What each role may do is in
+canopy-web's `docs/architecture/roles.md`; read it before putting an agent somewhere wide, because an
+editor can create and edit agents and send them turns.
 
-Editor is not a read-only role: `DELETE /api/agents/{slug}` is editor-tier
-(only an agent's keys — credentials, vault, read mode and host sites — need its owner or an
-admin). So an agent left in `dimagi` can have its board, tasks, turns and work
-products read — **and can be deleted outright** — by any Dimagi employee who
-chooses to join it. Nobody has done this, but it is not a boundary you
-want to be relying on politeness for.
-
-**Creating your own workspace is a first-class option, not a last resort** — it
-is the only one that starts empty and stays that way until you invite someone.
-Prefer it when your agent's board is yours rather than the fleet's; prefer
-`connect` when the agent is part of the shared fleet and you want it visible
-alongside the others. Either way it is reversible: setting `--workspace` on an
-already-registered agent moves it.
-
-Whichever you pick, say so explicitly when you register:
+Prefer your own workspace when the agent's board is yours rather than the fleet's; prefer a division
+when the agent is part of the shared fleet. Whichever you pick, say so explicitly when you register:
 
 ```bash
 canopy agent register --slug <your-agent> --workspace <workspace-slug>
@@ -169,65 +154,21 @@ canopy agent register --slug <your-agent> --workspace <workspace-slug>
 <details>
 <summary>Creating your own workspace, and inviting people to it</summary>
 
-There is **no UI for creating a workspace** — it is API-only. Pick the slug
-deliberately: lowercase letters, digits and hyphens only, and it appears in
-every URL your team uses.
+Create one from the workspace switcher in canopy-web (its last option), the `create_workspace` canopy-web
+MCP tool, or `POST /api/workspaces/` (canopy-web's OpenAPI has the body). Pick the slug deliberately:
+lowercase letters, digits and hyphens only, and it appears in every URL your team uses.
 
-> **Both names are permanent — there is no rename.** `OPTIONS` on
-> `/api/workspaces/<slug>/` returns `allow: GET, DELETE`: no `PATCH`, no `PUT`.
-> That covers `display_name` as well as the slug, so the only route to a
-> different name is delete-and-recreate, and delete returns 409 while the
-> workspace still owns agents. Spend the thirty seconds here rather than
-> discovering this later — "pick any slug you like" reads much lower-stakes than
-> it is.
+> **Both names are permanent: there is no rename.** The workspace routes have no `PATCH`/`PUT` for the
+> slug or `display_name`, so the only route to a different name is delete-and-recreate, and delete
+> returns 409 while the workspace still owns agents (or child workspaces, or project history).
 
-```bash
-curl -X POST https://canopy.dimagi.com/api/workspaces/ \
-  -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)" \
-  -H 'Content-Type: application/json' \
-  -d '{"slug":"my-team","display_name":"My Team"}'
-```
-
-**On Windows**, `$(cat …)` is not a thing — use PowerShell:
-
-```powershell
-$tok = Get-Content "$env:USERPROFILE\.claude\canopy\workbench-token"
-Invoke-RestMethod -Method Post `
-  -Uri "https://canopy.dimagi.com/api/workspaces/" `
-  -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
-  -Body '{"slug":"my-team","display_name":"My Team"}'
-```
-
-Creating it makes you its **owner**. To add someone (an owner, or an admin for viewers and editors):
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri "https://canopy.dimagi.com/api/workspaces/my-team/invites/" `
-  -Headers @{ Authorization = "Bearer $tok" } -ContentType "application/json" `
-  -Body '{"email":"someone@dimagi.com","role":"editor"}'
-```
-
-canopy emails them the invite link, and the response carries it as `token` too
-(`https://canopy.dimagi.com/invite/<token>`) in case the email does
-not arrive — `email_status` says whether it went out. Invites last 14 days;
-`role` may be `viewer`, `editor`, `admin` or `owner` and defaults to `editor`.
-You can also do this on the workspace's **Settings → Members** page, or ask your
-assistant over canopy's MCP (`create_invite`).
-
-Only a domain-allowlisted account (any `@dimagi.com` address) or an existing
-workspace member may create a workspace — a purely invite-admitted user cannot,
-which is a deliberate security boundary rather than a bug.
-
-Creating one is **not irreversible**: an owner can delete a workspace once it
-is empty.
-
-```bash
-curl -X DELETE https://canopy.dimagi.com/api/workspaces/my-team/ \
-  -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"
-```
-
-Owner-only, and it returns **409 while the workspace still owns agents**, naming
-them — move or delete those first (below) and retry.
+Creating it makes you its **owner**. Only a domain-allowlisted account (any `@dimagi.com` address) or an
+existing workspace member may create a workspace: a purely invite-admitted user cannot, which is a
+deliberate security boundary (otherwise invite-admission would be delegable). To add someone, use the
+workspace's **Settings → Members** page, or the `create_invite` MCP tool (`role` is `viewer`, `editor`,
+`admin` or `owner`, default `viewer`). canopy emails them the invite link; it also comes back as `token`
+(`https://canopy.dimagi.com/invite/<token>`) in case the email does not arrive. Deleting is owner-only and
+returns 409, naming what is in the way, while the workspace still owns agents: move or delete those first.
 </details>
 
 ### 3b. Your personal access token
@@ -261,34 +202,16 @@ This opens a browser, and writes the token to `~/.claude/canopy/workbench-token`
 
 ## 4. Create the agent
 
-> **Does this agent already exist as an OpenClaw? Then you want a different
-> command, and this section will quietly lose its history.**
->
-> `create-agent` scaffolds from scratch. Pointed at an agent that already lives on
-> an OpenClaw droplet, it produces a skeleton and leaves the persona, memory and
-> skills behind on a box you are about to decommission. Use the harvest route
-> instead — it is a shipped command:
->
-> ```bash
-> canopy openclaw-harvest snapshot   root@<droplet> --into ./snap
-> canopy openclaw-harvest inventory  ./snap
-> canopy openclaw-harvest compare    ./snap <agent>        # BOOTSTRAP or RECONCILE
-> canopy openclaw-harvest bootstrap  ./snap <slug> --mandate "<one line>" \
->     --mailbox "<slug>@dimagi-ai.com" --stakeholders "<who it works for>"
-> ```
->
-> `compare` tells you which branch you are on: **bootstrap** when no repo exists
-> yet (it carries persona, `memory/` and skills into a fresh repo, then git-inits
-> and commits), **reconcile** when the repo exists and only the OpenClaw's newer
-> skills need porting in.
->
-> Two things follow from taking this route, both of which surprised the first
-> person to walk it. **Section 5 arrives out of order** — you can register on
-> canopy-web before the repo exists, and `canopy agent doctor --repo .` correctly
-> refuses until it does, so that gate lands later than section 5 implies. And
-> `snapshot` needs `ssh` (it uses `rsync` when present and falls back to
-> `ssh … tar` otherwise), so Windows is fine, but the key has to actually load —
-> load it with `ssh-add` and confirm with `ssh-add -l`.
+> **Does this agent already exist as an OpenClaw? Then you want a different command.**
+> `create-agent` scaffolds from scratch; pointed at an agent that lives on an OpenClaw droplet it leaves
+> the persona, memory and skills behind on a box you are about to decommission. Use the harvest route
+> (`canopy openclaw-harvest snapshot | inventory | compare | bootstrap`, `--help` for flags), as laid out
+> in [Moving an OpenClaw agent onto canopy](moving-an-openclaw-onto-canopy.md). `compare` tells you which
+> branch you are on: **bootstrap** when no repo exists yet, **reconcile** when the repo exists and only
+> the OpenClaw's newer skills need porting in. Section 5 then arrives out of order: you can register on
+> canopy-web before the repo exists, and `canopy agent doctor --repo .` refuses until it does. `snapshot`
+> needs `ssh` (it uses `rsync` when present and falls back to `ssh … tar`), so Windows is fine, but the
+> key has to actually load: load it with `ssh-add` and confirm with `ssh-add -l`.
 
 Two decisions first, and only two:
 
@@ -339,49 +262,34 @@ This is the step that replaces guesswork. From inside the agent's repo:
 uv run --project "$CANOPY_ROOT" canopy agent doctor --repo .
 ```
 
-It prints one line per check and, for anything failing, **the exact command that
-fixes it**. On a fresh scaffold you should expect roughly this:
-
-```
-[OK  ] Identity              slug=scout mailbox=scout@dimagi-ai.com gog_client=canopy
-[FAIL] Plugin install        plugin 'scout' is NOT installed — ...
-[OK  ] Gating rails          2 effective deny rail(s)
-[OK  ] Hook wiring           rails enforced by canopy's session gating hook (agent-core/gating_guard.py --session); no agent-registered hook
-[OK  ] Rails enforced        guard blocked the raw-send probe (exit 2)
-[FAIL] Email auth (gog)      ... does not map scout@dimagi-ai.com -> canopy
-[FAIL] Auth client           no gog token on this machine for scout@dimagi-ai.com
-[FAIL] canopy-web board      agent 'scout' not registered
-```
-
-**Four failures on a brand-new agent is correct.** They are the four things the
-factory cannot do for you. Work them in this order:
+It prints one line per check (`src/orchestrator/agent_doctor.py` defines them) and, for anything failing,
+**the exact command that fixes it**. On a fresh scaffold, expect four failures: the plugin install, the
+email auth and auth client (no gog token yet), and the canopy-web setup check (the agent is not
+registered). They are the things the factory cannot do for you. Work them in this order:
 
 1. **Plugin install** — makes `/scout:turn` invocable at all:
    `/plugin marketplace add dimagi-internal/scout` then `/plugin install scout@scout`.
-2. **canopy-web board** — registers the agent so it has a board:
+2. **canopy-web setup** — registers the agent so it has a board:
    `canopy agent-publish register --repo .`
-   In more than one workspace? Name the agent's home with `--workspace <slug>`
-   (or `"workspace"` in `config/agent.json`, or `CANOPY_WEB_WORKSPACE=<slug>`) —
-   canopy-web refuses to guess, and the register fails until you do.
-   Made a typo in the slug, or just trying one out? Registration is reversible:
-   `curl -X DELETE .../api/agents/<slug>/ -H "Authorization: Bearer $(cat ~/.claude/canopy/workbench-token)"`
-   (editor or owner; takes the agent's projects, tasks, turns and skills
-   with it). Deleting the GitHub repo is `gh repo delete dimagi-internal/<slug>`.
-3. **Email auth** — only if the agent has a mailbox. Needs a real Google account
-   provisioned first; ask Jonathan. Then sign the mailbox in EITHER way — they
-   are one Google app (`canopy` / `canopy-web`, `agent_email.FLEET_CLIENTS`) and a token
-   under either serves the agent's turns:
-   - browser: canopy-web `/w/<ws>/agents/<slug>/settings/accounts` → **Connect Google** (mints under `canopy-web`, stored in canopy-web; boxes pick it up on their
-     next bootstrap — `canopy agent bootstrap` here, **Refresh runner** on a cloud runner's page);
+   In more than one workspace? Name the agent's home with `--workspace <slug>` (or `"workspace"` in
+   `config/agent.json`, or `CANOPY_WEB_WORKSPACE=<slug>`): canopy-web refuses to guess, and the register
+   fails until you do. Registration is reversible: an agent's owner or a workspace owner can delete it in
+   canopy-web (it takes the agent's projects, tasks, turns and skills with it). Deleting the GitHub repo
+   is `gh repo delete dimagi-internal/<slug>`.
+3. **Email auth** — only if the agent has a mailbox. Needs a real Google account provisioned first; ask a
+   dimagi-ai.com admin. Then sign the mailbox in EITHER way: they are one Google app (`canopy` /
+   `canopy-web`, `agent_email.FLEET_CLIENTS`) and a token under either serves the agent's turns:
+   - browser: canopy-web `/w/<ws>/agents/<slug>/settings/accounts` → **Connect Google** (mints under
+     `canopy-web`, stored in canopy-web; boxes pick it up on their next bootstrap: `canopy agent
+     bootstrap` here, **Refresh runner** on a cloud runner's page);
    - terminal: `gog login <slug>@dimagi-ai.com --client canopy --services gmail,drive,docs,sheets,forms,appscript`
-     (never `--client canopy-web` — that Web client cannot run gog's loopback login).
-4. **Secrets** — they live in the agent's **canopy vault**. Set the values on its Settings →
-   Security tab (or `canopy vault zk set --agent <slug> NAME`), turn zero-knowledge on
-   (`canopy vault zk enable --agent <slug>` — keep the recovery code it prints offline), and
-   press **Give them access** (Settings → Security) for each device the agent's page shows as
-   *Grant pending*. Then `canopy cred env --agent
-   <slug>` writes `~/.<slug>/.env` here; `doctor`'s *Secrets backend* line says whether this
-   device has access.
+     (never `--client canopy-web`: that Web client cannot run gog's loopback login).
+4. **Secrets** — they live in the agent's **canopy vault**. Set the values on its Settings → Security tab
+   (or `canopy vault zk set --agent <slug> NAME`), turn zero-knowledge on (`canopy vault zk enable
+   --agent <slug>`; keep the recovery code it prints offline), and press **Give them access** (Settings →
+   Security) for each device the agent's page shows as *Grant pending*. Then `canopy cred env --agent
+   <slug>` writes `~/.<slug>/.env` here; `doctor`'s *Secrets backend* line says whether this device has
+   access.
 
 Re-run `agent doctor` after each. **Do not move on until it is all green** — and
 re-run it on any new machine, since it catches setup that only ever existed on
@@ -395,30 +303,22 @@ under the client the token names,
 and verifies Gmail. Either fleet client serves a fleet declaration; it flags loudly only
 when the token is under a NON-fleet client the agent's turns would not use.
 
-### 5a. Mailbox setup on Windows — four things that bite
-
-Four things to know on Windows. The first three are handled by canopy; the fourth is PowerShell
-and stays your problem.
-
-- **The shared OAuth client.** `agent bootstrap` reads it from the workspace's canopy vault
-  "Shared" on canopy-web (`gog-oauth-client`). If bootstrap says it cannot read it,
-  this machine needs a key to that vault: ask a workspace owner to give it one on canopy-web.
-- **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. gog 0.40+ puts the
-  client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`) and
-  `config.json` in `config\` when `GOG_HOME` is set. `agent doctor` looks in all of these.
-- **Moving an agent between workspaces.** Use `canopy agent move --slug <x> --to <ws> --dry-run`
-  first: it lists what moves (turns, chats, mail, grants), what stays, and what will stop working
-  (e.g. a mail address on a domain the new workspace cannot use). Drop `--dry-run` to move it,
-  history and all. `canopy agent register --slug <x> --workspace <ws>` runs the same move, and
-  keeps the agent's existing name, email, description and persona unless you pass them.
-- **PowerShell, not canopy:** write `--client=canopy`, not `--client canopy`. A long command
-  pasted from chat can break at the space.
-
 Then fill in the two files that carry the actual judgment:
 
 - **`persona.md`** — voice, mandate detail, what is worth remembering.
 - **`skills/<name>/SKILL.md`** — the agent's first real job. A skill is already a
   slash command (`/<slug>:<name>`); you do **not** write a separate command file.
+
+### 5a. Mailbox setup on Windows
+
+- **The shared OAuth client.** `agent bootstrap` reads it from the workspace's canopy vault "Shared" on
+  canopy-web (`gog-oauth-client`). If bootstrap says it cannot read it, this machine needs a key to that
+  vault: ask a workspace owner to give it one on canopy-web.
+- **Where gog keeps things.** gog on Windows defaults to `%APPDATA%\gogcli`. With `GOG_HOME` set, gog
+  0.40+ puts the client credentials in a `data\` subfolder (`<GOG_HOME>\data\credentials-canopy.json`)
+  and `config.json` in `config\`. `agent doctor` looks in all of these.
+- **PowerShell, not canopy:** write `--client=canopy`, not `--client canopy`. A long command pasted from
+  chat can break at the space.
 
 ---
 
@@ -440,47 +340,30 @@ Settings → Security tab).
 
 ### Windows
 
-Supported. Install it with the PowerShell installer rather than the bash one:
+Install the runner with the PowerShell installer rather than the bash one:
 
 ```powershell
 .\runner\canopy_runner\scripts\install-runner.ps1
 ```
 
-It mirrors the macOS install exactly — snapshot the ref, build the wheels,
-`uv tool install`, provision the CDP sidecar — and registers two **Scheduled
-Tasks** where macOS uses launchd jobs:
+It mirrors the macOS install (snapshot the ref, build the wheels, `uv tool install`, provision the CDP
+sidecar) and registers two **Scheduled Tasks** (`\Canopy\canopy-runner` and
+`\Canopy\canopy-runner-updater`) where macOS uses launchd jobs. Bring it up in two passes: run it with
+`-NoTasks` first, check `canopy-runner update-check --config <your config>` answers, then re-run without
+the flag to register the tasks. Two Windows-specific setup notes:
 
-| | macOS | Windows |
-|---|---|---|
-| supervisor | launchd | Task Scheduler |
-| runner job | `com.canopy.runner` | `\Canopy\canopy-runner` |
-| updater job | `com.canopy.runner.updater` | `\Canopy\canopy-runner-updater` |
-
-Two Windows-specific setup notes:
-
-- **emdash needs its debug port.** On macOS that is the "Emdash CDP" app; on
-  Windows, make a shortcut to `emdash.exe` whose Target ends with
-  `--remote-debugging-port=9222`.
+- **emdash needs its debug port.** On macOS that is the "Emdash CDP" app; on Windows, make a shortcut to
+  `emdash.exe` whose Target ends with `--remote-debugging-port=9222`.
 - **The emdash DB path differs.** In `%USERPROFILE%\.canopy\runner.json`:
   `"emdash_db": "C:\\Users\\<you>\\AppData\\Roaming\\Emdash\\emdash4.db"`
 
-**If you need to SSH anywhere (harvesting an OpenClaw, reaching a droplet),** an exported
-`.pem` is a failure mode worth ruling out early: `ssh-keygen -l -f <file>` says `is not a key file` for a corrupt export,
-and if the host offers `publickey` only there is no way past it. Load the key into
-`ssh-agent` so it never lands on disk unprotected.
+**If you need to SSH anywhere (harvesting an OpenClaw, reaching a droplet),** an exported `.pem` is a
+failure mode worth ruling out early: `ssh-keygen -l -f <file>` says `is not a key file` for a corrupt
+export, and if the host offers `publickey` only there is no way past it. Load the key into `ssh-agent` so
+it never lands on disk unprotected.
 
-Everything else — Claude Code, emdash (stable ships `emdash-x64.exe` and
-`.msi`), the canopy CLI, canopy-web — is cross-platform already.
-
-**One honest caveat.** The Windows runner's logic is shared with the macOS one
-and unit-tested on both platforms' branches, and the installer is lint-clean —
-but it has not been run on a real Windows machine. Treat your first install as a bring-up: run it
-with `-NoTasks` first, check `canopy-runner update-check --config <your config>`
-answers, then re-run without the flag to register the tasks. If something breaks,
-that is a bug worth reporting, not something you did wrong.
-
-For the full detail — the two-job design, the log-redirection wrapper, the
-session boundary — see `runner/canopy_runner/README.md` in canopy-web.
+For the full detail (the two-job design, the log-redirection wrapper, the session boundary) see
+`runner/canopy_runner/README.md` in canopy-web.
 
 ## 7. Your first turn
 
@@ -525,8 +408,7 @@ session into a one-line fix. The logs live under
 `%LOCALAPPDATA%\claude-cli-nodejs\<project>\mcp-logs-<server>\` on Windows;
 the newest `.jsonl` there, last few lines.
 
-There is no `canopy-gws` MCP server: agents reach Google through `gog` and `canopy gdoc`. If you
-see an old `canopy-gws` failure, update the canopy plugin.
+There is no `canopy-gws` MCP server: agents reach Google through `gog` and `canopy gdoc`.
 
 ---
 

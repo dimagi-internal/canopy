@@ -49,9 +49,9 @@ narrative_slug; do not add one back. The left nav lists it under the run as
 ## Why this gate exists
 
 Judge findings reference scenes ("Scene 3: the table header uses jargon").
-Reviewing them used to mean: open the deck, scroll to the scene, open the
-video, drag the playhead around until the scene appears. This gate formalizes
-the fix: the recorder stamps per-scene `start_seconds` into the run report and
+Without help, reviewing them means opening the deck, scrolling to the scene,
+opening the video and dragging the playhead until the scene appears. This gate
+removes that: the recorder stamps per-scene `start_seconds` into the run report and
 captures a per-scene screenshot, and each posted finding cluster carries an
 inline `thumb` (the downscaled screenshot), a `deck_anchor` (`#scene-<N>`,
 combined with the request's `deck_url`), and an integer `video_t` (the scene's

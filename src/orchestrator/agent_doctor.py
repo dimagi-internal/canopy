@@ -920,7 +920,7 @@ def check_setup(
     runner, job, first turn — read from canopy-web's own setup checklist (one live GET), not
     re-derived here. The doctor keeps only what is true of THIS machine (local auth, plugins,
     rails firing, the materialized env); canopy-web answers the rest, so the doctor and the
-    Settings page can never disagree (docs/architecture/agent-setup-lifecycle.md, phase 3).
+    Settings page can never disagree (docs/architecture/agent-setup-lifecycle.md).
     It replaced a board-reachability ping that said nothing about what was left to do."""
     name = SETUP_CHECK
     if identity is None:

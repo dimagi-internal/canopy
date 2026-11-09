@@ -1436,9 +1436,8 @@ def agent_review_cmd(agent, hours, no_llm, no_verify, model, max_budget_usd, tim
                      projects_dir, as_json, qualify_file):
     """Review an agent's recent TURNS for operating-model friction and recommend fixes.
 
-    AGENT is a slug (e.g. `echo`) or a path to the agent repo. Build 2 of the agent operating
-    model — points canopy's analyze→propose loop at an agent's own turns. See
-    docs/agent-operating-model.md §4 Build 2.
+    AGENT is a slug (e.g. `echo`) or a path to the agent repo. Points canopy's
+    analyze→propose loop at an agent's own turns. See docs/agent-operating-model.md.
     """
     import json as json_mod
 

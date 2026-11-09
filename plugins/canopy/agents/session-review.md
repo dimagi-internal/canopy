@@ -111,7 +111,7 @@ Where:
 
 **Re-analysis policy** (the default — do not require a flag):
 
-`reviewed-sessions.md` records sessions you've previously analyzed AND the
+`reviewed-sessions.md` records the sessions you have analyzed AND the
 canopy version at which you analyzed them. The format is:
 
 ```
@@ -169,9 +169,9 @@ failure modes have been observed in real runs:
    internally; spawning >1 in parallel can hit a per-machine rate / token
    budget cap that returns empty results rather than erroring loudly.
 
-A 2026-05-02 session-review run dispatched 10 parallel background tasks; 9
-produced 0-byte output files and the run never reached Phase 4. Sequential
-is correct: 10 sessions × ~30s = ~5 min total, well within the cycle budget.
+Parallel background tasks produce 0-byte output files and the run never
+reaches Phase 4. Sequential is correct: 10 sessions × ~30s = ~5 min total,
+well within the cycle budget.
 
 If you genuinely need parallelism for a very large batch (>10 sessions),
 use the **Agent tool** to dispatch analysis subagents (max 3 concurrent),
@@ -254,7 +254,7 @@ If every proposal returned `shipped`, tell the user "all candidate
 findings were already shipped" and stop — do not present an empty
 table.
 
-The skill also handles steps that used to live inline here:
+The skill also handles:
 
 - Existing observations / proposals state cross-reference (look at
   `~/.claude/canopy/observations/` and `~/.claude/canopy/proposals/`
@@ -264,8 +264,8 @@ The skill also handles steps that used to live inline here:
 You still need to handle one piece yourself:
 
 **Agent memory cross-reference.** Read your own
-`proposal-history.md` — was a finding previously surfaced and rejected
-by the user? Don't re-propose unless severity has escalated since.
+`proposal-history.md` — was a finding surfaced and rejected
+by the user before? Don't re-propose unless severity has escalated since.
 This stays in the agent because it's about your conversational history
 with the user, which the skill can't see.
 
@@ -288,8 +288,8 @@ For each such session:
 3. Tag the finding with `[observation-only]` in the table so the user
    knows the proposal is hand-crafted, not LLM-generated.
 
-A 2026-05-02 ace session-review run dropped 13 valid observations across
-2 sessions because of a proposer parse error; this step closes that gap.
+Without this step, valid observations are dropped whenever the proposer
+hits a parse error.
 
 ### Step 6: Synthesize Table
 
@@ -333,12 +333,9 @@ If user priorities exist in memory, weight the ranking accordingly.
 ### Step 7: Record and Present (REQUIRED — DO NOT SKIP)
 
 **This step is load-bearing. Skipping it means the next run re-analyzes
-the same sessions from scratch.** A 2026-05-02 ace session-review run
-analyzed 10 sessions but never wrote them back to `reviewed-sessions.md`,
-so the memory still shows only the prior 8 entries at canopy=0.2.69 — the
-re-analysis policy will fire again on 0.2.75-analyzed sessions and burn
-~5 min of LLM time. Do NOT exit the cycle until the file has been
-written.
+the same sessions from scratch** (the re-analysis policy fires again on
+unrecorded sessions and burns ~5 min of LLM time). Do NOT exit the cycle
+until the file has been written.
 
 Track Step 7 with an explicit TaskCreate item at the start of the run
 ("Update reviewed-sessions.md with current canopy version") and only
@@ -394,7 +391,7 @@ mark it complete after the file has actually been edited.
 - **Always cross-reference recent commits** — if a fix you're about to
   recommend already shipped, drop or annotate the finding accordingly.
 - Treat all version metadata fields as optional — gracefully degrade
-- Don't re-propose items the user previously rejected (check proposal-history.md)
+- Don't re-propose items the user rejected (check proposal-history.md)
 - Save learnings to memory after every completed review cycle
 - When presenting the table, include enough context for the user to make decisions
   without reading the raw analysis output

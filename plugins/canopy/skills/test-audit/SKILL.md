@@ -33,8 +33,8 @@ per framework — see step 7.**
 Detect the framework. **Check the reported `test_count` against what you expect
 before going further.** When a repo has both backends configured, detection
 picks whichever collects more tests — but a mis-detect is silent and cheap to
-miss: a Django service with vitest in `package.json` once audited 143 JS tests
-and ignored 6,012 Python ones, and nothing in the output said so. If the count
+miss: a Django service with vitest in `package.json` can audit its few JS tests
+and ignore thousands of Python ones, and nothing in the output says so. If the count
 is implausibly low for the repo, re-collect with `--framework=`. If you see jest/go test/rspec/etc., stop and report —
 those aren't supported. (Vitest uses jest-compatible syntax for `it`/`test`/
 `expect`, so a real Jest suite often works through the vitest adapter, but
@@ -132,23 +132,19 @@ is expensive (~25 lines/test × 300+ tests = 7K+ lines). Pick one of:
 
 **Known data-quality issues to work around when reading `corpus.yaml`:**
 
-- **`static.has_real_assertion`**: pre-0.2.88 vitest collector mis-flagged
-  ~40% of tests with nested-paren `expect()` args (e.g.
-  `expect(obj.has('x')).toBe(true)`) as having no real assertion. If you're
-  on a stamp_dir collected before 0.2.88 OR the field's `false` count
-  looks implausibly high, ignore the flag and read the body. Fixed in
-  0.2.88 — also affected `expect(...).rejects.toThrow()` style.
-- **`runtime: null` on every test, vitest only**: pre-0.2.88 the vitest
-  runner only parsed the legacy `testResults` JSON shape and missed
-  vitest 4.x's `files`/`tasks` tree. The `investigate` verdict and
-  `env-fragile` special case can't fire when runtime is null suite-wide
-  — either re-collect with 0.2.88+ or skip those verdicts for the run.
+- **`static.has_real_assertion`**: a static scan can mis-flag tests whose `expect()`
+  args nest parens (e.g. `expect(obj.has('x')).toBe(true)`) or use
+  `expect(...).rejects.toThrow()`. If the field's `false` count looks
+  implausibly high, ignore the flag and read the body.
+- **`runtime: null` on every test (vitest)**: the runtime pass did not
+  parse the runner's output. The `investigate` verdict and `env-fragile`
+  special case can't fire when runtime is null suite-wide — re-collect
+  with a current canopy or skip those verdicts for the run.
 - **Pytest: an `assert`-line scan undercounts verification.** `pytest.raises`,
   `mock.assert_called_once_with(...)`, `assert_not_called()`, `assertRaises`,
   and a bare call to a function that RAISES on bad input are all real
   assertions that contain no `assert` statement. Tests using them show up as
-  "zero assertions" and read as slop until you open them. On a real audit,
-  three of the strongest-looking prune candidates were cleared this way. Treat
+  "zero assertions" and read as slop until you open them. Treat
   `assertion_count == 0` as *read this*, never as *this is worthless*.
 - **Duplicate nodeids**: when two `it(...)` blocks under different
   `describe` parents share the same leaf name, they collapse to the same
@@ -187,7 +183,7 @@ it should check scores 1, but `prune` is the wrong action — deleting it throws
 away the only written record of an intent someone had. Mark these `refactor`
 with the low score, say in `reason` what assertion to write, and note the
 deviation in the report. `refactor` is never auto-applied, so the intent
-survives to be fixed by a human.
+survives until a human writes the assertion.
 
 **Special case — environment-fragile tests:**
 If `runtime.status` is `error` AND the error mentions things like `no
@@ -233,14 +229,13 @@ whose name and body together communicate the most about the contract.
 ### 4b. Verify the two claims you cannot make by reading
 
 Reading tells you what a test *says*. Two claims need more than that, and both
-were got wrong on a real audit before this section existed.
+are easy to get wrong from reading alone.
 
 **"A sibling already covers this" — prove it by mutation, not by grep.**
 `redundant-with-sibling` is the most-used prune reason and the easiest to get
-backwards. On a real run the keeper was searched for by grepping the named file
-for "hull"; it covered the property thoroughly but called them "features", so
-the audit reported "this property is verified nowhere" — confidently, in
-writing, about a suite that was fine. Before citing a keeper, break the code
+backwards. Grepping for the keeper by the property's name misses a test that
+covers it under different words, and the audit then reports "this property is
+verified nowhere" — confidently, in writing, about a suite that is fine. Before citing a keeper, break the code
 both tests point at and confirm the keeper fails:
 
 ```bash
@@ -252,7 +247,7 @@ git checkout -- <source-file>                 # always revert
 If the keeper passes on the mutant, it is not a keeper.
 
 **"This rewrite is better" — same check.** A confident replacement that also
-cannot fail is worse than the tautology it replaced, because it reads like
+cannot fail is worse than the tautology it replaces, because it reads like
 coverage. Any test you rewrite in step 7 should be shown to fail against a
 deliberate bug before you claim it.
 

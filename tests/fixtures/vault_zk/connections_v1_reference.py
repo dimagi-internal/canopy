@@ -1,8 +1,7 @@
 """Canopy connections zero-knowledge v1 — REFERENCE implementation + test-vector generator.
 
 Normative definition of the bytes a connection's envelopes and grant statement
-carry (spec docs/superpowers/specs/2026-10-31-connections-zero-knowledge-design.md;
-plan Part 0). Every implementation (canopy-web's checks in apps/connections/wire.py,
+carry. Every implementation (canopy-web's checks in apps/connections/wire.py,
 the canopy CLI, the browser) must agree with `connections_v1_vectors.json`.
 It builds on zk-v1 (zk_v1_reference.py, beside this file): same primitives, same
 encodings (b64u = base64url WITHOUT padding; jkt = RFC 7638 thumbprint).

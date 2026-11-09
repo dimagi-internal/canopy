@@ -112,7 +112,7 @@ Run sequentially, NOT in parallel (`$CANOPY_PM_DIR` may not exist yet on a fresh
 
    If a previous autonomous PR is still open, RESUME that PR instead of starting fresh — pick up at Phase C and drive it to merge before opening anything new.
 
-7. **Run `testing.prepare` if configured.** Optional bootstrap for split-stack projects (`pyproject.toml` + `frontend/package.json`) where fresh worktrees start with empty `.venv` / `node_modules`. Two confirming cycles on ace-web (2026-04-28 adoption-blockers + first-chat-path) had mechanical-checks fail until deps were built — `testing.prepare` closes that gap.
+7. **Run `testing.prepare` if configured.** Optional bootstrap for split-stack projects (`pyproject.toml` + `frontend/package.json`) where fresh worktrees start with empty `.venv` / `node_modules`. Without it the mechanical checks fail because the deps are not built.
 
    **`testing.prepare` MUST be lockfile-non-mutating.** Use `npm ci` (not `npm install`), `uv sync --frozen` (not `uv sync` alone), `bundle install --frozen`, `pnpm install --frozen-lockfile`, etc. Reason: a mutating prepare leaves `package-lock.json` / `uv.lock` / equivalent in a "modified" state, which fails the clean-worktree precondition in step 5 on every re-run AND drags lockfile churn into the autonomous PR's diff. Lockfile-pinned variants are also faster (no resolution pass) and reproducible. If your lockfile *should* update, do that as a deliberate human-driven commit before running the autonomous cycle.
 
@@ -136,11 +136,11 @@ Run sequentially, NOT in parallel (`$CANOPY_PM_DIR` may not exist yet on a fresh
 
    If the prepare command exits non-zero, hits the 5-minute timeout, or violates the non-mutation contract, log the failure in the run log and stop the sprint — do NOT continue into Phase A with a half-built or dirty environment.
 
-8. **Legacy `sent-emails/` cleanup hint.** Earlier versions of this skill stored email artifacts under `$CANOPY_PM_DIR/sent-emails/`; that storage was removed in v0.2.62 (the asset branch + run log carry everything now). If the directory still exists, print one line and continue — do NOT auto-delete:
+8. **Stale `sent-emails/` hint.** Nothing is stored under `$CANOPY_PM_DIR/sent-emails/` (the asset branch + run log carry everything). If the directory exists, print one line and continue — do NOT auto-delete:
 
    ```bash
    if [ -d "$CANOPY_PM_DIR/sent-emails" ]; then
-     echo "Legacy $CANOPY_PM_DIR/sent-emails/ found — safe to remove with: rm -rf $CANOPY_PM_DIR/sent-emails"
+     echo "Stale $CANOPY_PM_DIR/sent-emails/ found — safe to remove with: rm -rf $CANOPY_PM_DIR/sent-emails"
    fi
    ```
 
@@ -265,6 +265,6 @@ pm-assets/<sprint-slug>                  ← branch on the PROJECT'S repo origin
 └── email.html                           ← the rendered HTML body that was sent
 ```
 
-**No sent-emails archive in `$CANOPY_PM_DIR`.** Earlier versions of this skill stored `email.md` + `email.html` + `screenshots/` under `$CANOPY_PM_DIR/sent-emails/<slug>/`, but no instruction ever read that storage and the rendered HTML was already canonical on the asset branch. The run log captures shipped highlights (Phase D), the asset branch hosts the polished email and screenshots, and `learnings.md` accumulates universal lessons. Anything else is dead storage.
+**No sent-emails archive in `$CANOPY_PM_DIR`:** nothing reads such storage and the rendered HTML is canonical on the asset branch. The run log captures shipped highlights (Phase D), the asset branch hosts the polished email and screenshots, and `learnings.md` accumulates universal lessons. Anything else is dead storage.
 
-If a project has a legacy `~/.canopy/pm/<project>/sent-emails/` directory from before this redesign, the user can delete it whenever — `rm -rf ~/.canopy/pm/<project>/sent-emails/`. The skill does not auto-prune.
+A `~/.canopy/pm/<project>/sent-emails/` directory is dead storage the user can delete (`rm -rf`); the skill does not auto-prune.

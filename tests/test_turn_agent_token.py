@@ -1,6 +1,6 @@
 """An agent's runner turn prefers the login canopy-web issued for THAT turn over its stored
-canopy-pat, and falls back to the stored PAT on any miss (turn-scoped agent token, phase 1;
-canopy-web docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md)."""
+canopy-pat, and falls back to the stored PAT on any miss (turn-scoped agent token; see
+src/orchestrator/turn_agent_token.py)."""
 import json
 import os
 import stat

@@ -25,29 +25,20 @@ Schedules fire from canopy-web, so a schedule does not depend on any one machine
 
 ## What `canopy agent use` does
 
-It checks each step, fixes the ones canopy can, and reports **ok**, **done** or **NEEDS YOU**
-with the exact URL or person. It is safe to re-run until everything is ok:
+It checks each step, fixes the ones canopy can, and reports **ok**, **done** or **NEEDS YOU** with the
+exact URL or person. It is safe to re-run until everything is ok. The steps, in order, are listed in the
+module docstring of `src/orchestrator/agent_use.py` (sign-in, device key, vault grant, licence, plugin,
+env, the agent's Google login). Two are worth knowing before you run it:
 
-- you are signed in to canopy-web (`/canopy:setup` signs you in),
-- this computer is registered for local use,
-- this computer's device key is enrolled and approved,
-- this device holds a grant of the agent's vault,
-- you have a licence to use the agent (requested automatically at your first session; an admin
-  approves it unless the agent's caller list already gives you the whole agent),
-- for each credential a person delegated to the agent (their GitHub token), you are signed in to
-  your own account on this computer (`gh auth status`), because only the machines that run the
-  agent get the delegated one,
-- the agent's plugin is installed (`/plugin install <slug>@canopy-agents`),
-- `$CANOPY_AGENT` is set for the project, and the agent's env is synced,
-- the agent's Google login is in gog (its OAuth client file, its token, the account mapped),
-  so its Gmail and Drive work. The agent acts on Google as itself. An admin's computer gets it
-  at once; with a licence it is imported when your first session starts (canopy-web hands a
-  licence holder the agent's login only inside their own turn), by
-  `canopy agent google-login --if-needed`. It needs `gog` installed — the step names the
-  install for your OS. An agent whose mail canopy-web hosts skips this step.
+- A licence is requested automatically at your first session; an admin approves it unless the agent's
+  caller list already gives you the whole agent.
+- For each credential a person delegated to the agent (their GitHub token), you sign in to your own
+  account on this computer (`gh auth status`), because only the machines that run the agent get the
+  delegated one. The agent's Google login reaches a licence holder only inside their own turn (imported
+  by `canopy agent google-login --if-needed`), and needs `gog` installed; an agent whose mail canopy-web
+  hosts skips it.
 
-It ends with one line: start a session and run `/<slug>:turn`, or the list of what still needs
-you.
+It ends with one line: start a session and run `/<slug>:turn`, or the list of what still needs you.
 
 ## Where your agent's secrets live
 

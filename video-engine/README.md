@@ -15,8 +15,6 @@ npm install
 - `npm run render -- --program=mbw` — full pipeline → out/mbw-v<sha>.mp4
 - `npm test` — run unit tests
 
-See `docs/superpowers/specs/2026-05-13-connect-program-videos-poc-design.md` for the design.
-
 ## Smoke test (no API keys required)
 
 ```

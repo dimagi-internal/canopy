@@ -33,7 +33,7 @@ The video-engine schema refuses a `style: recorded` spec that carries a title
 card, an end card, any non-walkthrough beat, or a lower-third, so a gloss
 element cannot sneak back in through a hand-edited spec.
 
-## The style rules (Sagar Atre's brief, 7 Oct 2026)
+## The style rules
 
 - No music, no title cards, no zooms or callouts added afterwards.
 - Each cut opens on a **live screen**, and its first spoken line is
@@ -186,8 +186,8 @@ it or split the cut in two: a cut over 40 s is not shippable.
   twice, so repeating them per cut costs nothing), and the upload refuses a
   cut without them. The narrative version keeps one video **per cut
   id** (re-uploading a cut replaces only that cut), and the review link's
-  **Cuts** tab shows each video beside that cut's narration, for guests too
-  (canopy-web#1288). `--spec` resolves the cut's title and scenes from the
+  **Cuts** tab shows each video beside that cut's narration, for guests too.
+  `--spec` resolves the cut's title and scenes from the
   recipe; a wrong id fails before anything is uploaded. The narrative's hero
   is the first cut unless you pass `--hero` on the one you want. Without
   `--cut` an upload is the version's single video, as for an explainer — so
@@ -216,7 +216,7 @@ canopy-web's is written beside it as `<slug>.recipe.yaml.web`.
 - **Screen, data or step changes**: re-record (steps 2–3), then upload. The
   new master replaces the old one on the version.
 
-A narrative whose sources were never pushed (made before this existed) is
+A narrative whose sources were never pushed is
 backfilled with `narrative push-sources <recipe> --master … --report …`.
 
 ## Common mistakes
@@ -224,7 +224,7 @@ backfilled with `narrative push-sources <recipe> --master … --report …`.
 - **Leaving the recipe or master only in `$WORK` or a scratchpad**: the upload
   refuses without them for exactly this reason. A narrative that only one
   machine can re-render is stranded the moment that machine's temp dir is
-  cleaned (the chlorine demo, 2026-10-14).
+  cleaned.
 - **Putting `style`/`cuts` into the narration on canopy-web**: they are recipe
   fields. Edit the recipe and push it; `narrative pull` restores the file.
 - **Writing the opener into a cut's second scene**: the opener is checked

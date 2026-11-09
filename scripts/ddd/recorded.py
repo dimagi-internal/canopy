@@ -3,8 +3,7 @@
 The default narrated video (``style: explainer``) is ONE long arc: a title
 card, every scene back to back, the brand end card, and a music bed under it
 all. ``style: recorded`` is a different product — "a very well produced
-version of *I just recorded myself walking through this for someone*" (Jon
-Jackson, 2 Oct 2026; tightened by Sagar Atre's brief, 7 Oct 2026):
+version of *I just recorded myself walking through this for someone*":
 
 * no music, no title or end cards, no zooms / callouts / lower-thirds /
   captions added afterwards;

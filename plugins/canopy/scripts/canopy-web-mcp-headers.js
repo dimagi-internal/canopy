@@ -385,8 +385,7 @@ function provenanceHeaders() {
   return h;
 }
 
-// THIS TURN'S OWN LOGIN (turn-scoped agent token, phase 1 — canopy-web
-// docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md). The cloud
+// THIS TURN'S OWN LOGIN (the turn-scoped agent token; see src/orchestrator/turn_agent_token.py). The cloud
 // runner asks canopy-web for a short-lived login as the turn's agent, revoked when the
 // turn ends, and leaves it at ~/.canopy/agent-token/turn/<CANOPY_TURN_ID>.token — the
 // variable is a turn id, not a secret, so it survives the stripping. Preferred over the

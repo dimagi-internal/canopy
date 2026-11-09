@@ -17,8 +17,9 @@ The optional LLM judgment layer (which decides best-of-fleet on ties and writes 
 lives elsewhere; this core is what the unit tests pin. Sibling to `agent_review` (which measures
 ONE agent's friction); this spreads improvements ACROSS the fleet. FRAMEWORK tier — imports
 the standalone `canopy_agent_factory` package for the template baseline (via its public
-`templates()` / `gating_config()`, never its privates), never product code. See
-docs/superpowers/specs/2026-07-03-fleet-align-design.md.
+`templates()` / `gating_config()`, never its privates), never product code. The skill
+(`plugins/canopy/skills/fleet-align/SKILL.md`) drives it; the edit itself is the AI's, from
+`change_brief` (see the section of that name below).
 """
 from __future__ import annotations
 

@@ -12,9 +12,8 @@ description: |
 
 Stand-alone scoring of a captured screenshot against a caller-provided
 rubric. Implements the **Tough Judge methodology** — adversarial-first,
-score-from-3 default, projector-test gate, calibration prior — that
-canopy:walkthrough's scene loop used to inline. Extracted in canopy
-v0.2.79 so the same judge can be reused by:
+score-from-3 default, projector-test gate, calibration prior — shared
+by every caller that needs a visual judgment:
 
 - **`canopy:walkthrough`** — once per captured scene (its 5-dim rubric:
   Content / App Page / Screenshot / Slide / Demo Readiness)
@@ -71,8 +70,7 @@ before→after delta INFORM the action-fidelity check: no visible change where
 the narration claims an effecting act caps the relevant dimension per the
 caller's `deduction_rules`.
 
-**Back-compat:** `frames` absent ⇒ judge the single `screenshot_path` exactly
-as today. `screenshot_path` remains REQUIRED and is always the after-frame.
+**Without `frames`:** judge the single `screenshot_path`. `screenshot_path` remains REQUIRED and is always the after-frame.
 
 ### `page_text` (optional but strongly recommended)
 
@@ -178,7 +176,7 @@ note}`), use it as a SCORING INPUT for action-fidelity:
   apply the caller's deduction. A failed `must_succeed` action is the most
   severe form.
 
-When `action_trace` is ABSENT, behave exactly as today — score from the
+When `action_trace` is ABSENT, score from the
 screenshot + page_text alone, no action-fidelity reasoning. The trace is
 purely additive: it can only *lower* a score that the still frame would have
 let pass, never raise one.
@@ -520,8 +518,8 @@ fix_recommendation: |
 ## Calibration target
 
 The methodology itself is calibrated against the walkthrough corpus
-(canopy `evals/walkthrough/fixtures/` — defects with known severity
-scores). When `canopy:walkthrough-eval` runs against fixtures, the
+(fixtures under `evals/walkthrough/`, created by
+`canopy:walkthrough-defect-creator` — defects with known severity scores). When `canopy:walkthrough-eval` runs against fixtures, the
 visual-judge dispatch should produce ground-truth-aligned scores. If
 detection rate drops below 80% or inter-run variance rises above 0.5,
 fix the methodology here, not in caller rubrics.
@@ -532,21 +530,8 @@ equivalent doc in the consuming repo.
 
 ## Why this lives in canopy
 
-The Tough Judge methodology was authored for canopy:walkthrough but
-is genuinely general — any eval that needs visual judgment of a
-captured page benefits from the same adversarial-first + score-from-3
-discipline. Embedding it inside walkthrough's scene loop forced
-copy-paste for every other vision-judging eval. canopy is the right
-home: it's the plugin that owns the methodology, the eval-fixture
-corpus, and the calibration doc.
-
-## Change Log
-
-| Date | Change | Author |
-|---|---|---|
-| 2026-05-07 | Initial extraction from canopy:walkthrough Phase 1–4 inline scoring. Methodology preserved verbatim; per-rubric dimensions parameterized via the `rubric` input. canopy:walkthrough now dispatches this skill per scene; ACE polish-eval consumes it for visual dimensions. | canopy team |
-| 2026-06-02 | Harshness pass. Added (1) an **Independence requirement** — judge must run as a fresh sub-agent with no build context; self-assessment forces −1/dimension + `self_assessed` flag. (2) The **CEO-send gate** as the definition of a 5 (would the CEO forward it untouched, with their name on it?). (3) Raised the Phase-1 flaw floor from 3 to **≥8, ≥1 per layout region**, ranked. (4) A **claim-scrutiny** pass (self-disclaiming elements / unsupported claims cap claim_reality_coherence ≤2). (5) A **5-second first-impression** pass and an **internal-chrome / deliverable-readiness** check, each with sanity-floor caps. Motivated by an observed builder-as-judge inflation of ~2 points. | jjackson |
-| 2026-06-18 | **`action_trace` + `narrative` context fields (action-aware judging).** The judge scored ONE still screenshot per scene, so a scene that filled+submitted a form and one that only HOVERED over the same controls (same end-frame) scored identically. Added an optional `action_trace` (the per-scene slice of the recorder's run-report: `{kind, target, ok, must_succeed, note}`) and the scene's full `narrative`. When present, a new Phase-1 action-fidelity check compares the narrated act against what the trace actually did: a narration that asserts an effecting act (create/fill/submit/select/award/publish) while the trace only hovers/scrolls ⇒ "claimed, not shown" (top-rank flaw); any `ok:false` entry ⇒ the action failed/timed out. These feed the caller's action-fidelity `deduction_rules`. Back-compat: absent `action_trace` ⇒ score from the still frame exactly as before; the trace can only LOWER a score, never raise one. | jjackson |
-| 2026-06-18 | **`frames` input (before/after change-judging).** A scene that EFFECTS a state change (fills/submits/awards) can't be judged from one still — the before state is gone by the end-frame. Added an optional `frames: {before, after}` pair (the recorder's `--capture-action-frames` writes `scene_<N>_before.png` beside the canonical `scene_<N>.png`). When provided, the judge reads both and a new Phase-1 "change test" lists it as a flaw when the narration claims an effecting act but the after-frame is visually unchanged — feeding action-fidelity deductions. Back-compat: `frames` absent ⇒ judge the single `screenshot_path` (still required; always the after-frame) exactly as before. | jjackson |
-| 2026-10-07 | **Severity-gated findings replace the "at least EIGHT" quota (canopy#786).** A fixed flaw quota guaranteed a backlog on every pass, and with "any unfixed Phase-1.1 flaw caps demo readiness at 3" it guaranteed a 3 — the Spark and supply runs (~9 h each, 434 and 200 subagents) never converged. Phase 1.1 now lists only real defects, each graded high/medium/low; only high caps readiness at 3, medium at 4, low never caps. Added **explanatory copy** and **hardcoding / special-casing the demo** as flaws, re-pointed the jargon item at plainer labels instead of "a plain-language read", and every recommended fix must remove or restructure — never add a tooltip, legend or definition. | jjackson |
-| 2026-06-03 | **`artifact_kind` context field.** Distinguishes `product_walkthrough` (a frame of a real, shipping web app being driven through a flow) from `standalone_deliverable` (a slide/figure/report meant to stand alone, the default). For a `product_walkthrough` the surrounding product chrome — nav bar, sidebar, breadcrumbs, account menu, the app's own buttons — is EXPECTED and grounding, NOT a flaw: it is the evidence the demo is a real product and not a mockup. The "internal app chrome → max 3" sanity floor no longer fires in walkthrough mode. Test/placeholder DATA (raw primary-key slugs, `test-user`, `Untitled`, lorem) still caps in either mode. Motivated by walkthrough judges wrongly penalizing real-website nav that is the point of a live-product demo. | jjackson |
+The Tough Judge methodology is general — any eval that needs visual
+judgment of a captured page benefits from the same adversarial-first +
+score-from-3 discipline. It lives here, not inside a caller's scene loop,
+so no vision-judging eval copy-pastes it: canopy owns the methodology, the
+eval-fixture corpus, and the calibration doc.

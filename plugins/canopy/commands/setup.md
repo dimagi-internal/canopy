@@ -19,7 +19,7 @@ second:
 
 **A person who can use an agent never needs `canopy agent dispatch` to reach it.** Ask it in
 your own Claude Code session. Dispatch hands work to a runner to do unattended; every dispatch
-is a fresh cloud session with no memory of the last (canopy-web#1955).
+is a fresh cloud session with no memory of the last.
 
 This command signs you in to canopy-web and registers ONE agent catalog, `canopy-agents`,
 which lists every agent in every workspace you belong to. That registration is the only reason

@@ -88,7 +88,7 @@ Author a `docs/walkthroughs/<narrative-slug>.yaml` that is simultaneously:
    `auth`, `personas`, `scenes` conform exactly to the canopy walkthrough engine
    so it can be played directly by `/canopy:walkthrough`.
 
-The unified spec is the linchpin artifact of the DDD v2 loop.  It is authored
+The unified spec is the linchpin artifact of the DDD loop.  It is authored
 FROM the grounded `why_brief.yaml` produced by Phase 0 (ddd-why-brief + ddd-why-qa).
 
 ## Inputs
@@ -116,7 +116,7 @@ the patterns scan the checklist; authors who don't read the deeper sections.
 - **Add `timeout_ms` to the state-minting clicks that navigate (publish / submit / award).** Playwright waits for the click's scheduled navigation inside the same timeout, so a slow server-side POST aborts a healthy render at the global 6s default. `timeout_ms: 30000` on that one action loosens it (`max(override, preset)` — it can never tighten); leave ordinary clicks on the default so broken targets still fail fast.
 - **When a single scene needs more room than the rest, set `viewport: {width, height}` on it.** Most specs render at one viewport. A dense plan-review scene can override per-scene without inflating the whole recording. (See "Per-scene `viewport:` override".)
 - **Map / WebGL scenes capture fine — give the map a `hold` to paint, and set `full_page: false` on map+table pages.** Headless WebGL (Mapbox/deck.gl/three.js) renders via SwiftShader out of the box; a "blank map" is almost always too short a settle (tiles still loading) or a full-page capture of a tall table+map page, not a WebGL failure. (See "Map / WebGL scenes".)
-- **Name on-screen things in the narration the way the screen writes them** (`Kuunika Outreach Network`, `MEETING REGULARITY`, `66.0%`, or the `${var}` that holds them). Besides keeping narration and frame in sync, the recorder captures the elements the narration names, with the action targets, as the scene's REGIONS; DDD re-judges a scene only when those regions, its page text or its layout changed (canopy#780). A scene whose narration names nothing on screen falls back to its targets alone.
+- **Name on-screen things in the narration the way the screen writes them** (`Kuunika Outreach Network`, `MEETING REGULARITY`, `66.0%`, or the `${var}` that holds them). Besides keeping narration and frame in sync, the recorder captures the elements the narration names, with the action targets, as the scene's REGIONS; DDD re-judges a scene only when those regions, its page text or its layout changed. A scene whose narration names nothing on screen falls back to its targets alone.
 - **Narrative-only back-half scenes are fine** — the recorder skips them with `--skip-empty-scenes`. Deck slides still cover them; the mp4 doesn't waste `min_hold_ms` on identical static pages.
 - **A scene that omits `url:` continues on whatever page the previous scene's actions navigated to** (continue-scene pattern). This is how a narrative can CREATE an entity in one scene and operate on it in later scenes whose URL can't be known ahead of time.
 - **Synthetic-data demos declare a `setup:` block and reference minted IDs as `${var}` — never hardcode them.** The synthetic generator runs before every render (`rerun: per_render`, the default — required when the demo itself mutates state) and the recorder substitutes `${run_id}` etc. from its outputs JSON into scene `url`s and action `target`/`value` fields. A hardcoded ID silently goes stale on every reseed; a `${...}` placeholder without `setup.outputs` is rejected by spec-qa. **To mint an id ON CAMERA** (create an entity mid-demo, then use its real id in later scenes — a fresh lifecycle each render), use a `capture` action instead of a setup output. (See "Data setup contract" and "Capture + late binding" in Step 5.)
@@ -460,7 +460,7 @@ narrative first (Step 3) so the two stay in lockstep.
   actions whose failure doesn't change product state. A skipped `scroll_to`
   costs a smoother camera pan, not a wrong demo.
 
-  **A `scroll_to` that cannot move the page is a spec problem, and it now says
+  **A `scroll_to` that cannot move the page is a spec problem, and the recorder says
   so.** Centring a target needs `scrollTop = y + scrollY - innerHeight/2`. For a
   target in the top half of the page that is negative; the browser clamps it and
   the page does not move. The action still reports `ok: true` — it is a
@@ -469,7 +469,7 @@ narrative first (Step 3) so the two stay in lockstep.
   the camera was last left on, several scenes back if that is where it stopped.
   A frame like that looks completely legitimate and is of the wrong thing.
 
-  The recorder now clamps the scroll and records a `warning` on the action,
+  The recorder clamps the scroll and records a `warning` on the action,
   visible in `run-report.json` and in the per-scene action trace the judges read:
 
   ```
@@ -756,7 +756,7 @@ features:
     verify: test it  # too short, not a real assertion
 ```
 
-**`ddd-spec-qa` now requires ≥1 verifiable feature per scene.**  A scene with
+**`ddd-spec-qa` requires ≥1 verifiable feature per scene.**  A scene with
 `features: []` (or no `features` key) will fail spec-qa and block the gate.
 The `ddd-narrative-actionability-eval` will additionally score whether the
 narration (concept_claim + show) implies those features to a cold reader.
@@ -903,7 +903,7 @@ scenes:
   generators whose data survives re-renders.
 - **A change BETWEEN scenes** (a supplier's answer arrives, a second seat acts)
   is a scene `before:` hook — `before: "<command>"` runs off camera after the
-  previous scene's capture and before this scene starts, from the same cwd as
+  previous scene's capture and ahead of this scene, from the same cwd as
   `setup.command`, `${var}` resolved late. Never a watcher spawned by `setup`.
   See the ddd agent's "State-mutating narratives".
 - Substitution happens at render time and never mutates the spec file. An
@@ -1068,7 +1068,7 @@ a "leave it as a multi-sentence beat" signal.
 ## Optional: `target_rubric:` — what this narrative's runs converge on
 
 When the caller said what the build or demo is FOR, put that in the spec as a
-`target_rubric:` block (canopy#790, `scripts/ddd/target_rubric.py`). Runs then
+`target_rubric:` block (`scripts/ddd/target_rubric.py`). Runs then
 converge when its criteria pass, not on a fixed 4.0. Write outcomes in the
 caller's terms. Each outcome needs a `pass_when` that one screenshot can answer
 yes or no:

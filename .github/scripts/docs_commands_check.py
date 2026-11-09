@@ -2,8 +2,7 @@
 """CI gate: every `canopy ...` command shown in an end-user page must exist.
 
 Extracts `canopy <subcommand> ...` from inline code spans and fenced blocks in the
-end-user pages (README.md, CONTRIBUTING.md, docs/*.md; not docs/superpowers,
-docs/plans or docs/architecture), resolves each to a click command of the real
+end-user pages (README.md, CONTRIBUTING.md, docs/*.md; not docs/architecture), resolves each to a click command of the real
 CLI, renders that command's `--help`, and fails when
 
   * the command does not exist, or

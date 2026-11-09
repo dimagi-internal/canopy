@@ -23,9 +23,8 @@ canopy-web holds both:
   least one `human_why` quote, a person's own words, and the server rejects one
   without. Work toward an idea is that idea's subtasks (`parent`). canopy-web
   derives each idea's stage (proposed / started / shipped) and who it came from.
-  You do not maintain a second list. (Jonathan, 2026-10-12: ideas and tasks must
-  not be conflated. Before this, every task showed as an idea, and an agent's
-  process work read as people's product ideas.)
+  You do not maintain a second list. Ideas and tasks must not be conflated: an
+  agent's process work must not read as people's product ideas.
 - **The contributor page** is the part that takes judgment: which of someone's
   hundreds of prompts say what they want. **You write it and canopy-web renders
   it** at `/w/<ws>/agents/<agent>/projects/<P>/people/<person>`.
@@ -113,9 +112,8 @@ Write a JSON body:
   builds it. Search the owning repo's merged PRs (`gh pr list --state merged
   --search …`) and look at the live product. If it shipped, file it `done` with
   the PR links; if part of it shipped, file it `in_progress` with the links and
-  ask the person whether the rest is still wanted. *(2026-10-12: hal P5's
-  "per-programme and per-organisation Labs pages" was filed as proposed. It had
-  shipped on 2026-10-09, the day it was said, and its owner had to ask why.)*
+  ask the person whether the rest is still wanted. Filing a shipped request as
+  proposed makes its owner ask why.
 - **Links.** Every quote links to where they said it. A canopy session link is
   `https://<canopy>/w/<ws>/chat/<session-id>`.
 - **Privacy.** Leave out anything personal, health-related or performance-related.
@@ -140,10 +138,9 @@ The person, the agent's admins or the writing agent can delete it
 
 ## Why it is built this way
 
-- **Their words, not the agent's view.** The brief that started this (Supply,
-  2026-10-09) asked for exactly that: "seeing your idea move from proposed to
-  shipped with your own words still attached". A page in the agent's voice
-  pulls everyone toward the agent's reading.
+- **Their words, not the agent's view.** The point is seeing your idea move from
+  proposed to shipped with your own words still attached. A page in the agent's
+  voice pulls everyone toward the agent's reading.
 - **Stage and attribution are computed, the summary is stored.** Stage and
   attribution are deterministic facts about tasks, so canopy-web derives them
   and they cannot go stale. The summary is judgment, so an agent writes it and

@@ -78,8 +78,8 @@ Claude stops at these on purpose. None of them is a gap in the tools.
   covers two things: the mailbox login (the agent's Settings → External accounts → **Connect Google**
   in canopy-web, or `gog login <mailbox> --client canopy` at a terminal — either fleet
   client serves the agent's turns) and accepting the workspace invite. Whoever holds the
-  agent's Google login does this. (The agent's own canopy-web token is not minted by hand any
-  more: **Give it its canopy login** puts it in the vault.)
+  agent's Google login does this. (The agent's own canopy-web token is not minted by hand:
+  **Give it its canopy login** puts it in the vault.)
   If Google says it *"couldn't verify this account belongs to you"*, a dimagi-ai.com admin has to
   lift the login challenge for a few minutes first.
 - **Changing an agent's owner or admins.** This is browser-only by design: the owner is whose
@@ -92,9 +92,6 @@ Claude stops at these on purpose. None of them is a gap in the tools.
 
 ## Where the agents are
 
-| Agent | Owner(s) | Workspace | Secrets |
-|---|---|---|---|
-| Muse | Gillian Javetski, Amie Vaccaro | `commcare` | canopy vault |
-| Fizzy | Shayoni Mazumdar | `strategy` | canopy vault |
-| Jarvis | Andrea King | `connect` | not created yet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md) |
-| SureAdhere | Matthew Hayto | `sureadhere` | not created yet: repo scaffolded, not registered |
+Each agent's owner, workspace and setup state are on its page in canopy-web
+(`/w/<workspace>/agents/<slug>`) and in `list_agents` / `agent_setup`; this page does not keep a list.
+For an agent moving off an OpenClaw droplet, see [moving an OpenClaw](moving-an-openclaw-onto-canopy.md).

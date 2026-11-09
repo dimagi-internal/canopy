@@ -260,7 +260,7 @@ git log --since="<prior run_date>" --name-only --pretty=format: | sort -u
   `investigate` (those are by definition unresolved). Re-triage it.
 
 Report the split explicitly: "16 open · 3 re-triaged (evidence moved) · 13
-carried forward from 2026-07-24." A run that carries most of the backlog
+carried forward from the prior run." A run that carries most of the backlog
 forward is the *success* case, not a shortcut — it means the prior triage is
 still good and the money goes to what changed.
 
@@ -290,19 +290,11 @@ author citing the issue they were closing. A hit in a **skill/agent prose file**
 signal: it is a workaround, and belongs to Phase 2b below, not here. Distinguish them, because
 they point in opposite directions.
 
-Measured 2026-09-09 across `ada`, `ace-web` and `eva` — 7 open issues, and **4 were finished work
-nobody had closed**, three of them with the issue number sitting in the code that resolved them:
-
-| issue | age | the receipt |
-|---|---|---|
-| `ada#34` | 42d | `bin/ada-run-cursor` already delegates to `canopy cursor`; both named bugs gone |
-| `eva#120` | 43d | `bin/cos-state` docstring: *"cadence POLICY … (run-state lives in a canopy cursor)"* |
-| `ace-web#706` | 43d | `list_sessions_in_workspace` cites `ace-web#706` **in its own docstring** |
-
-Running this before the fan-out would have dispositioned three issues in about a minute, and it
+Many open issues are finished work nobody closed, with the issue number sitting in the code that
+resolved them. Running this before the fan-out dispositions those in about a minute, and it
 changes what the expensive per-issue evaluation is *for*: not "is this still broken?" but "the
-code says this is done — is it done *completely*?" That distinction matters, because the fourth
-(`ace-web#744`) had shipped **half** — the receipt was real and the work was not finished. So a
+code says this is done — is it done *completely*?" That distinction matters, because an issue can
+have shipped **half**: the receipt is real and the work is not finished. So a
 citation is a strong prior, never a verdict: still confirm against the code, and still cite
 `file:line` in the close, exactly as § Critical rules requires.
 
@@ -741,11 +733,11 @@ So the rule: **the run log carries the machinery, chat carries the outcome.**
 | `evidence_paths`, `source: fresh`, sidecar shape | Blocking-tier counts; cluster lines |
 | Cost/coverage self-accounting | Truncation — but only if it truncated |
 
-Three specifics, because each was a real defect:
+Three specifics:
 
 - **Never mention the prior run unless it changed this run's output.** If
   carry-forward saved subagents, one clause is enough ("13 carried forward from
-  2026-07-24"). If it saved nothing, say nothing — its absence is not news.
+  the prior run"). If it saved nothing, say nothing — its absence is not news.
 - **Never explain the skill's own plumbing.** Sidecars, phase gates, and
   cost-saving steps are how the work got done, not results. A reader who has to
   learn the skill's internals to read its output has been handed the wrong
@@ -761,12 +753,8 @@ skill so the next run survives. The workaround *works*. Every run after that rou
 around the bug cleanly, nothing costs anything visible, and **the only force that would
 have closed the issue is gone.** The workaround became the closure.
 
-Measured 2026-09-09 across hal, ace and canopy: **594 issue references in skill/agent
-prose, 13 of them pointing at still-open issues.** The oldest was `canopy#416` — hal's
-`skills/ace-review` § Traps has carried *"Trusting `agent-review` signals raw → read the
-evidence; the taxonomy misfires on runs (canopy#416)"* since it was filed. **42 days
-open, zero comments**, while a fresh repro that day showed 31% of its `auth_friction`
-hits carried an explicit success marker. The bug was never fixed because it never hurt
+Skill and agent prose cites many issues; the ones that point at still-open issues are the
+fix-and-unwind candidates, and they sit open with no comments because the bug never hurts
 again.
 
 **Find them — one command, run it in Phase 2 for the whole repo at once** rather than

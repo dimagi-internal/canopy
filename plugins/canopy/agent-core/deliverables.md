@@ -24,8 +24,7 @@ to the team and dies with the agent identity / the worktree.
 
 Every agent has exactly **one Drive root of its own** — `$GDRIVE_ROOT_FOLDER`, the folder named for
 the agent (`Eva`, `Echo`, …). **That root is the only Drive location an agent needs to know.**
-Everything it produces or remembers goes underneath it, in two standing areas (more may be added as
-we learn what agents need to keep):
+Everything it produces or remembers goes underneath it, in two standing areas:
 
 ```
 $GDRIVE_ROOT_FOLDER/             ← your own root folder — the one id you care about
@@ -43,7 +42,7 @@ that's the whole contract.
 
 1. **Never My Drive root. Never a loose local file. Never above your root.** Everything lands in
    your root's `Projects/` or `Process State/`, owned/co-owned so the team can reach it. Work dumped
-   beside your root instead of inside it is the exact mistake this layout fixes.
+   beside your root instead of inside it breaks the layout.
 2. **One subfolder per project.** Deliverables file into a **per-project subfolder** under
    your root's `Projects/`, NOT flat in `Projects/`.
    - **Reuse** the project's existing folder if one exists (search first); **iterate the same doc
@@ -74,8 +73,8 @@ that's the whole contract.
    pasted text, never "it's in a local file."
 
 **ACE keeps its own opportunity locations.** ACE files opportunity artifacts through its own
-pipeline into its own working Drive paths — that stays as it is. Its *agentic* storage (ad-hoc
-projects, process state) follows this standard under its own root like everyone else.
+pipeline into its own working Drive paths. Its *agentic* storage (ad-hoc projects, process state)
+follows this standard under its own root like everyone else.
 
 ## How you file (the publishing engines do the layout for you)
 
@@ -100,8 +99,14 @@ uv run --project "$CANOPY_ROOT" canopy gdoc publish --md <file>.md --replace <do
 **Why the runtime bundle and not `canopy` on PATH.** The session-start hook keeps
 `<plugin>/runtime` at the installed plugin's version on every machine. Nothing updates the
 global CLI: it is whatever was last `uv tool install`ed, so on a runner nobody reinstalled on,
-it silently lags behind or lacks a subcommand entirely. Below, `canopy gdoc|gsheet` is
+it can lag behind or lack a subcommand entirely. Below, `canopy gdoc|gsheet` is
 shorthand for this `uv run --project "$CANOPY_ROOT" canopy …` form.
+
+The destination flags (`--project`, `--area`, `--task`, `--parent`, `--replace`) and `--share`
+are defined by `canopy gdoc publish --help` (`src/orchestrator/agent_gdoc.py::gdoc_publish`). The
+command emits JSON `{id, url, shared, verified}`: share the `url`; `verified: true` means the share
+landed. Publishing with raw `gog drive upload` instead needs an explicit `--parent <subfolder-id>`
+(resolve/create `Projects/<project>` under your root first).
 
 **Tabular deliverable? Use `canopy gsheet`, never raw `gog sheets create`.** Same contract,
 same flags — one `--tab` per worksheet, as `"Name=path.tsv"` (`.csv` is comma-delimited,
@@ -113,13 +118,8 @@ uv run --project "$CANOPY_ROOT" canopy gsheet publish --name "<Sheet title>" --p
   --tab "Targets=roster.tsv" --tab "Clean-up=cleanup.tsv" --share domain
 ```
 
-- `--project` files into `Projects/<project>`; `--area "Process State"` (optionally with
-  `--project`) files a tracker. `--parent <id>` bypasses resolution when you already have the id.
-- Emits JSON `{id, url, shared, verified}` — share the `url`; `verified: true` means the share
-  landed. Agents that still publish with raw `gog drive upload` pass `--parent <subfolder-id>`
-  explicitly (resolve/create the `Projects/<project>` folder under your root first).
-- **`gsheet` refuses to create with no destination** — unlike a Doc there is no sensible root
-  fallback for a tracker, and the fallback is what produced the incident below.
+**`gsheet` refuses to create with no destination** (`agent_gdoc.py::gsheet_publish`) — unlike a
+Doc there is no sensible root fallback for a tracker.
 
 **A deck? Use `canopy gslides`.** It converts a `.pptx` into a native Google Slides deck
 authored as you, filed, shared, and read back (the converted slide count must equal the
@@ -127,7 +127,7 @@ pptx's). It needs no claude.ai Google Drive connector, which an org can disable 
 `gslides-export` skill is the whole procedure for a Claude Slides deck (download its .pptx,
 then publish). Drive cannot overwrite a native deck in place, so every export is a NEW file
 and the link changes; pass `--supersede <previous id>` to trash the old copy once the new
-one verifies.
+one verifies (`src/orchestrator/agent_gslides.py`).
 
 ```bash
 uv run --project "$CANOPY_ROOT" canopy gslides publish --pptx ~/Downloads/deck.pptx \
@@ -137,30 +137,27 @@ uv run --project "$CANOPY_ROOT" canopy gslides publish --pptx ~/Downloads/deck.p
 ### Landing on prior work is reported — read it
 
 When the engine REUSES a project folder that already holds files, it says so on stderr and
-names them. That note is not decoration: **the layout's whole value is that the next turn
-finds the last one's work.** On 2026-08-12 an agent built a trip target roster while a
-project folder for that same trip already existed, holding a doc that contradicted the
-trip window the roster was built on. Nothing surfaced it, and the deliverable was wrong.
+names them (`agent_gdoc.py::_report_reuse`). That note is not decoration: **the layout's whole
+value is that the next turn finds the last one's work.** The existing folder can hold a doc that
+contradicts what you are about to build.
 
 So when you see the note: open what is there before treating the task as new, and prefer
 updating the existing artifact in place (`--replace <id>`) over adding a parallel one.
 
 ## Why this is enforced, not just written
 
-Per the operating model, hard behavioral rules don't live in prose alone — prose relies on the
-model choosing to comply, which fails under load (origin: 2026-07-20, an agent created a brief in
-My Drive root and handed the requester a link they couldn't open — the doc was fine, the filing +
-share were skipped; 2026-07-23, a fresh session dumped work beside the agent roots instead of
-under its agent folder). So the "never My Drive root / never flat at root" invariant is a
+Hard behavioral rules don't live in prose alone — prose relies on the model choosing to comply,
+which fails under load. So the "never My Drive root / never flat at root" invariant is a
 **fleet-baseline gating rail** for the tool where the mistake happens:
 
 **Every agent that touches Drive mounts the `gws` channel** in its `config/gating.json`
-`channels` list. The baseline rails then cover the whole creation surface:
+`channels` list. The baseline rails (`plugins/canopy/agent-core/gating-baseline.json`, channel
+`gws`) then cover the whole creation surface:
 
 - **raw `gog`** — any `docs|sheets|slides|forms create`, `drive mkdir`, or `drive upload`
   with no `--parent` (`drive upload --replace <id>` is exempt: it overwrites in place).
-- **the engines** — `canopy gdoc|gsheet|gslides publish` with no `--project` / `--area` / `--parent` /
-  `--replace`, which would otherwise fall back to your Drive *root*, beside `Projects/`
+- **the engines** — `canopy gdoc|gsheet|gslides publish` with no `--project` / `--task` / `--area` /
+  `--parent` / `--replace`, which would otherwise fall back to your Drive *root*, beside `Projects/`
   rather than inside it.
 - **MCP** — any gdrive-server `drive_create_*` / `docs_create*` / `sheets_create` whose
   arguments carry no parent/folder id, matched on tool-name *shape* so it holds under any
@@ -169,28 +166,22 @@ under its agent folder). So the "never My Drive root / never flat at root" invar
 `--help` is exempt throughout, so a rail can never stop you reading the usage of the command
 it just told you to use.
 
-> **Do not mount `gws` selectively.** Until 2026-08-13 the rails were narrower than the tool
-> surface — the baseline carried exactly one (`gog drive upload --convert`), agents were told
-> they could skip the channel if their helper "always parents", and any extra verbs were
-> hand-added per agent. The result: `gog sheets create` was in nobody's list, hal/ada/echo
-> mounted no Drive rails at all, and on 2026-08-12 an agent built a 45-row target roster
-> straight into its own My Drive root, unshared — a dead link to the human who asked for it.
-> Nothing errored. **A denylist of verbs always trails the tool surface**, and "compliant by
-> construction" only holds until someone reaches past the helper for a file type the helper
-> never covered. Mount the channel; the rails are shaped so a compliant command passes.
+> **Do not mount `gws` selectively.** **A denylist of verbs always trails the tool surface**: the
+> rails match the SHAPE of "creates a Drive object without a destination", so a verb or file type
+> nobody listed is still covered, while "compliant by construction" only holds until someone
+> reaches past the helper. Mount the channel; the rails are shaped so a compliant command passes.
 
-The other half of the lesson: **a rail can only say no.** Blocking `gog sheets create` would
-have been pure friction while there was no sanctioned way to publish a spreadsheet at all —
-which is why `canopy gsheet` shipped in the same change as the rail that forbids the
+**A rail can only say no.** Blocking `gog sheets create` is pure friction unless a sanctioned way to
+publish a spreadsheet exists, which is why `canopy gsheet` exists beside the rail that forbids the
 alternative. If you add a rail, make sure the path it names actually exists.
 
 ## Review before you share the link — `canopy gdoc check`
 
 "It published" is not "it looks right". `canopy gdoc publish` and `canopy gdoc email-blocks`
-now **review the doc themselves** after writing it: they read its HTML export (the rendered
-view) and fail on an emptied body, italic bleed, leaked markdown (`**`, `|---|`, `&amp;`), or
-dropped links, and they warn on off-style fonts and sizes. A failure lands in `degraded` and the
-command exits non-zero — **do not hand out that link**.
+**review the doc themselves** after writing it: they read its HTML export (the rendered view) and
+fail on an emptied body, italic bleed, leaked markdown, or dropped links, and warn on off-style
+fonts and sizes (the checks are listed in the `src/orchestrator/gdoc_review.py` module docstring).
+A failure lands in `degraded` and the command exits non-zero — **do not hand out that link**.
 
 After any OTHER kind of edit (raw `gog docs` verbs, a Docs API batch, an MCP `docs_*` write),
 review it yourself before sharing:
@@ -202,16 +193,17 @@ uv run --project "$CANOPY_ROOT" canopy gdoc check <docId> [--expect-links N] [--
 - **Count `--expect-links` from your source** (`grep -oE '\]\(https?://' src.md | wc -l`); a
   guessed number fails a good doc and teaches you to drop the flag.
 - **House style** (font / body size) comes from `config/agent.json`
-  `"gdoc_style": {"font": "Arial", "body_size": 11}`; without it those checks are skipped.
-- Tables are fine now: the create path renders GFM pipe tables as real Doc tables (2026-10-04),
-  and `--replace` unwraps soft-wrapped lines before gog converts them, so a `**bold**` span
-  that your editor wrapped across two lines no longer ships its asterisks.
+  `"gdoc_style": {"font": "Arial", "body_size": 11}` (`gdoc_review.py`); without it those checks
+  are skipped.
+- The create path renders GFM pipe tables as real Doc tables, and `--replace` unwraps
+  soft-wrapped lines before gog converts them (`agent_gdoc.py::unwrap_markdown`), so a `**bold**`
+  span your editor wrapped across two lines does not ship its asterisks.
 
 **It is enforced on the Stop event, not just written here.** A pass writes a receipt to
-`$CANOPY_AGENT_HOME/gdoc-gate/passed/<docId>`, and `agent-core/gdoc_gate.py` refuses to let a
-turn end on a link to a doc you wrote and have not reviewed since your last write (at most once
-per write; a link you only READ never trips it). Wire it with a thin loader, exactly like
-`gating_guard.py`:
+`$CANOPY_AGENT_HOME/gdoc-gate/passed/<docId>`, and `plugins/canopy/agent-core/gdoc_gate.py`
+refuses to let a turn end on a link to a doc you wrote and have not reviewed since your last write
+(at most once per write; a link you only READ never trips it). Wire it with a thin loader, exactly
+like `gating_guard.py`:
 
 ```json
 "PostToolUse": [{"matcher": "Bash|^mcp__", "hooks": [{"type": "command",
@@ -220,26 +212,20 @@ per write; a link you only READ never trips it). Wire it with a thin loader, exa
   "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/gdoc_gate.py\" check"}]}]
 ```
 
-Origin: eva, 2026-08-28 — three docs published, three links handed over, the checker run zero
-times with the rule in context. Promoted from eva to the fleet 2026-10-04.
-
 ## Editing a doc that already exists — what breaks
 
-Every rule here cost a real deliverable somewhere in the fleet (mostly eva and echo, which
-each rediscovered the same `--replace` failures independently). `canopy gdoc check` now
-catches most of the damage after the fact; these keep you from causing it.
+`canopy gdoc check` catches most of the damage after the fact; these keep you from causing it.
 
 **`publish --replace`** (same id, same link) runs through gog's markdown converter, not ours:
 - **It can empty the doc.** It clears the body and then injects; gog's find-replace has a hard
-  ~120s limit, and a timeout in between leaves only `__CANOPY_GDOC_BODY_SENTINEL__`. The old
-  version is gone and a retry fails the same way. Keep the source markdown, and fall back to a
-  fresh publish (rename the wreck `ZZ SUPERSEDED …`).
+  ~120s limit, and a timeout in between leaves only `__CANOPY_GDOC_BODY_SENTINEL__`
+  (`agent_gdoc.py::REPLACE_SENTINEL`). The old version is gone and a retry fails the same way.
+  Keep the source markdown, and fall back to a fresh publish (rename the wreck `ZZ SUPERSEDED …`).
 - **Never `--replace` a doc whose link is already out.** If it fails, you have handed someone
   a live link to a broken or empty doc. Publish fresh and send the new link.
-- **It reuses the old doc's run styling**, which is how one italic line became an all-italic doc.
-- **It can flatten lists and wipe headings** (echo, 2026-08-13: all 11 headings gone, every
-  paragraph a bullet; eva, 2026-08-17: every list flattened). The engine reports this in
-  `degraded` — believe it. For list-heavy docs, publish fresh.
+- **It reuses the old doc's run styling**, which is how one italic line becomes an all-italic doc.
+- **It can flatten lists and wipe headings.** The engine reports this in `degraded` — believe it.
+  For list-heavy docs, publish fresh.
 - **It wipes email blocks.** Insert blocks last; to change one, republish and re-insert.
 - A fresh publish has a new id, so **re-grant any per-person shares** the old doc had.
 
@@ -257,19 +243,19 @@ uv run --project "$CANOPY_ROOT" canopy gdoc suggest <docId> --edits edits.json [
 
 Each `find` must match exactly once in the doc as it reads now (text already suggested for
 deletion is skipped); everything goes in one batch, and the command fails loudly if anything
-went in as a direct edit. `--dry-run` here is honest: it reads the doc and prints the batch.
-If it reports the Developer Preview error, the account isn't enrolled. **Do not fall back to
-direct edits on someone else's doc** — ask. (eva, 2026-10-02: eight direct edits to a
-teammate's concept note, asked for as suggestions, undone by hand.)
+went in as a direct edit (`src/orchestrator/gdoc_suggest.py`). `--dry-run` here is honest: it reads
+the doc and prints the batch. If it reports the Developer Preview error, the account isn't
+enrolled. **Do not fall back to direct edits on someone else's doc** — ask.
 
 **Raw `gog docs` edits:**
-- **No `--dry-run`.** On gog v0.12.0 the flag performed the write, so a dry-run-then-run pair
-  applied it twice. It is a fleet deny rail (gws channel).
+- **No `--dry-run`.** gog's `--dry-run` on a docs write verb performs the write, so a
+  dry-run-then-run pair applies it twice. It is a fleet deny rail (`gws` channel in
+  `gating-baseline.json`).
 - **Capture before you edit** (`gog docs cat <id> > "$WD/before.txt"`), take indices from
   `gog docs structure <id> --json`, write **once**, then re-read and `canopy gdoc check`.
 - **Scratch files go in `WD=$(mktemp -d)`, never a fixed `/tmp/<name>`.** Agents share `/tmp`;
   a fixed path can silently hand you a sibling session's structure dump for the same doc, and a
-  stale index writes to the wrong offset in a live doc (eva, 2026-09-09).
+  stale index writes to the wrong offset in a live doc.
 - **`find-replace` drops hyperlinks** on the text it rewrites. Check the span afterwards and
   re-link with `gog docs format <id> --match "<unique phrase>" --link <url>` (`--match` styles
   only the first hit, so make the phrase unique).
@@ -281,13 +267,13 @@ teammate's concept note, asked for as suggestions, undone by hand.)
   file you named with `--out`; grepping the command's stdout reads metadata and "finds" zero
   headings in a perfectly good doc.
 - **A version that lacks a verb is usually just old.** Check `gog --version` and
-  `gog docs --help` before designing around a gap (eva ran gog 0.12 against an upstream 0.38).
+  `gog docs --help` before designing around a gap.
 
 **"Permission denied" from a service-account Drive MCP means the wrong identity, not missing
 access.** gog runs as you; a gdrive MCP (chrome-sales, ace-gdrive) runs as a shared service
 account that starts with access to nothing. Do not share a doc with the service account to get
-past the error — on 2026-08-28 that put a writer grant on an externally-shared funder doc to
-change four margins that `gog docs page-layout` could do as the agent. Use gog.
+past the error: that puts a writer grant on whatever doc you shared, including an
+externally-shared one. Use gog.
 
 ## Sharing with people outside the agent's domain
 
@@ -311,8 +297,9 @@ gog drive permissions <id> -a <acct> --client <client>    # confirm it landed
 
 - **Your Drive root** — the id of your own agent folder. It is **environment-specific, so it lives
   in your agent's Canopy vault** (a `GDRIVE_ROOT_FOLDER` credential), never in git, and is
-  resolved into `~/.<agent>/.env` as `$GDRIVE_ROOT_FOLDER` by `canopy cred env`. Everything files beneath it via `Projects/` + `Process State/`. You never
-  declare, or reason about, what that root sits inside. See `agent-core/agent-runtime.md`.
+  resolved into `~/.<agent>/.env` as `$GDRIVE_ROOT_FOLDER` by `canopy cred env`. Everything files
+  beneath it via `Projects/` + `Process State/`. You never declare, or reason about, what that
+  root sits inside. See `agent-core/agent-runtime.md`.
 
 ## Related
 

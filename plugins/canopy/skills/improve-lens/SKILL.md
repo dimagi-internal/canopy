@@ -74,7 +74,7 @@ The lens descriptor's `signals[].probe` field declares which probes a lens needs
 
 ### Probe: `cross_model` (rubric internal-consistency)
 
-For each verdict with score ≥ 6 (and not previously probed in this run), dispatch three parallel Agents in a single message — sonnet, opus, haiku — each grading the verdict's captured artifact with the eval skill's current rubric.
+For each verdict with score ≥ 6 (and not already probed in this run), dispatch three parallel Agents in a single message — sonnet, opus, haiku — each grading the verdict's captured artifact with the eval skill's current rubric.
 
 ```
 Agent(model: "sonnet", subagent_type: "general-purpose", description: "judge probe sonnet", prompt: <grade prompt>)

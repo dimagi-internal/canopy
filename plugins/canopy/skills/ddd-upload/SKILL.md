@@ -151,12 +151,10 @@ SPEC_ABS="$(realpath "<spec_path>")"   # the run's unified_spec.yaml
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.narrative pull "<narrative-slug>" "$(dirname "$SPEC_ABS")")
 ```
 
-- `{"action": "pulled", "version": N, "lock_path": ...}` — the lock now holds
+- `{"action": "pulled", "version": N, "lock_path": ...}` — the lock holds
   canopy-web's current narrative. Continue.
 - There is **no conflict case**. canopy-web owns the story and the lock is a
-  generated cache of it, so a pull can only ever fast-forward. (Pre-L1 this step
-  could exit 2 on a divergence between two writers of one file; that failure mode
-  no longer exists.)
+  generated cache of it, so a pull can only ever fast-forward.
 
 Then check the run has a narrative — otherwise the package renders as **"no
 narrative"** in canopy-web. Check it deterministically:
@@ -175,7 +173,7 @@ for the run's `narrative_slug`). If it exits non-zero, STOP and tell the user:
 > `<narrative-slug>`). Publishing would show as 'no narrative'. Run
 > `/canopy:ddd-narrative-review <run_id>` first — that posts and locks the
 > narrative and stamps the run — then re-run the upload. This usually means the
-> feature slug was renamed mid-flow and the narrative was posted under the old
+> feature slug changed mid-flow and the narrative was posted under the old
 > slug."
 
 This is belt-and-suspenders: the upload script (`scripts.ddd.upload`) enforces
@@ -198,7 +196,7 @@ VIDEO_ABS="$(realpath <video_path>)"
 # The human's in-CHAT "publish it" does NOT resolve this gate — the gate's approval
 # channel is a separate canopy-web UI click (or --release-approved). Run this bare
 # form non-interactively (an agent / CI) and it will NOT publish: it posts the review,
-# prints the URL, and HOLDS (returns without publishing). It no longer hangs — but it
+# prints the URL, and HOLDS (returns without publishing). It does not hang, but it
 # also doesn't publish, so the bare form is rarely what you want:
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.upload <run_id> --video "$VIDEO_ABS")
 # Converged run + the human approved release in-session ("publish it" / "externally
@@ -211,7 +209,7 @@ VIDEO_ABS="$(realpath <video_path>)"
 (cd "$DDD_REPO" && uv run python -m scripts.ddd.upload <run_id> --video "$VIDEO_ABS" --stuck)
 ```
 
-**Identity and workspace are checked before anything is written** (ace#2805):
+**Identity and workspace are checked before anything is written**:
 every DDD write — the narrative post, `upload-video`, render uploads, this upload —
 refuses in an agent's session (`$CANOPY_AGENT`) where canopy has no identity for the agent
 (`canopy agent token --slug <slug>` says why; it never borrows the operator's
@@ -227,7 +225,7 @@ that *is* the external_release sign-off — pass `--release-approved` so it reso
 authorized, attributed channel. Do NOT run the bare release form expecting it to publish: the
 external_release gate is a **separate approval channel** (a canopy-web UI click) that the
 human's in-chat approval does not satisfy — the two are disconnected, which is why a bare
-publish "unexpectedly asks for approval." Run bare + non-interactively, it now prints the
+publish "unexpectedly asks for approval." Run bare + non-interactively, it prints the
 review URL and **holds** (nothing published) rather than hanging — a clear signal to re-run
 with `--release-approved` (or resolve the review in the UI). Only omit `--release-approved`
 when no human has approved and you deliberately want to post the gate for later UI resolution.
