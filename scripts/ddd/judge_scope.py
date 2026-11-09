@@ -81,7 +81,7 @@ SIGNATURES_FILE = "signatures.json"
 HISTORY_LIMIT = 200
 _SCENE_PASS_RE = re.compile(r"^scene_(\d+)(?:_r\d+)?\.json(?:\.seal\.json)?$")
 _ARC_FILES = ("verdict-arc.yaml", "arc_findings.json")
-# v1 (<= 0.2.528): one hash over resolved targets and raw page text.
+# v1: one hash over resolved targets and raw page text.
 # v2: per-component hashes; reseeded ids compared in their ${var} spec form.
 # v3: the frame is not compared byte for byte — region DOM +
 #     region crops (anti-aliasing tolerant) + a whole-frame layout guard; page

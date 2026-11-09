@@ -1639,7 +1639,7 @@ def resolve_thread_id(identity: EmailIdentity, ref: str, *, runner=subprocess.ru
 
     A turn that came in by the resend-to-canopy-mailbox retry carries the SES
     `<...@email.amazonses.com>` Message-ID as `trigger.message_id`, and gog answers that
-    with "Invalid id value" (Eva, 2026-10, turn 3712). Gmail indexes every message by its
+    with "Invalid id value". Gmail indexes every message by its
     Message-ID header (`rfc822msgid:`), so look the thread up. A real thread id (16 hex
     digits, no `@`) is returned untouched, with no extra gog call."""
     ref = (ref or "").strip()

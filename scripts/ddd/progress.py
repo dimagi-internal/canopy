@@ -57,8 +57,8 @@ TRICKLE_FRACTION: float = 0.15
 
 # A fall in confirmed caps is progress only when it exceeds this many cells.
 # Median-of-3 still flips a cell on noise (p ~ 0.1-0.2 per cap), so one cap
-# dissolving is not evidence of a fix: on noora-health/20261015-1129 the count
-# read 2, 3, 1, 2, 1, 1 over six passes at a flat 2.0 score, and each 2 -> 1
+# dissolving is not evidence of a fix: a count
+# reading 2, 3, 1, 2, 1, 1 over six passes at a flat 2.0 score, and each 2 -> 1
 # "fall" reset the stall detector (iterations 2 and 3), buying two more passes.
 CAPS_BAND: int = 1
 

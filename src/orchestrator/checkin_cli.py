@@ -338,7 +338,7 @@ def _build_group(name: str, tag: str, doc: str) -> click.Group:
     def finish_cmd(run_id, result_url, summary, huddle_id, tasks_proposed):
         """Mark the run done. With a channel, canopy-web posts one pointer line in the thread —
         the output itself lives in the UI. Re-running on a finished run is a no-op; a run that
-        is not running any more (skipped / expired / failed) is refused (exit 2)."""
+        is not running (skipped / expired / failed) is refused (exit 2)."""
         _finish(run_id, result_url, summary, huddle_id, tasks_proposed)
 
     return grp

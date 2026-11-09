@@ -86,14 +86,14 @@ class RunState(BaseModel):
     pending_review: str | None = None
     last_actor: str | None = None
     last_actor_at: str | None = None
-    # Scene-filter metadata (0.2.128). A full-spec run sets scenes_run to the
+    # Scene-filter metadata. A full-spec run sets scenes_run to the
     # complete list of spec indices and scene_filter to None. A partial run
     # (--scene <selector> on /canopy:ddd-run or /canopy:walkthrough) sets
     # scenes_run to the rendered subset and scene_filter to the raw selector.
     # /canopy:ddd-upload refuses any run with scene_filter != None.
     scenes_run: list[int] | None = None
     scene_filter: str | None = None
-    # Auto-iterate signal (0.2.131). Computed by /canopy:ddd-run Step 5 after
+    # Auto-iterate signal. Computed by /canopy:ddd-run Step 5 after
     # the dual-judge verdict comes back; consumed by the /canopy:ddd
     # orchestrator's Converge-or-loop branch. Possible values:
     #   continue              — all non-DEFER findings are fix_kind=mechanical;
@@ -129,7 +129,7 @@ class RunState(BaseModel):
     #                           no batch can move the gate.
     auto_iterate_next_action: str | None = None
     auto_iterate_reason: str | None = None
-    # Hosted artifact URLs per iteration (0.2.135). Populated by
+    # Hosted artifact URLs per iteration. Populated by
     # /canopy:ddd-run's render-then-upload step: each iteration's rendered
     # deck (and clip, when present) is auto-uploaded to canopy-web and the
     # returned URL is stamped here. Surfaced findings and review-request
@@ -184,13 +184,13 @@ class RunState(BaseModel):
     # by itself; what decides is whether the score moved. Never reset within a
     # run; HARD_CAP is the runaway backstop.
     concept_gate_deferred: int = 0
-    # Hosted narrative-review URL (0.2.150). Stamped by the ddd-narrative-review
+    # Hosted narrative-review URL. Stamped by the ddd-narrative-review
     # gate after it posts the narrative to the canopy-web review surface — the
     # token-bearing /review/<id>/?t=<token> link the user approved. ddd-run's
     # upload step passes it as the video's `narrative` companion link so a
     # viewer watching the clip can jump back to the story that generated it.
     narrative_review_url: str | None = None
-    # Hosted narrative-review ID (0.2.172). Stamped alongside narrative_review_url
+    # Hosted narrative-review ID. Stamped alongside narrative_review_url
     # by the ddd-narrative-review gate's `narrative post` command — the raw
     # ReviewRequest UUID, so ddd-upload can attach this run's artifacts to the
     # exact narrative version without regex-parsing it back out of the URL.
@@ -249,7 +249,7 @@ class RunState(BaseModel):
     # scenes' claims the current product cannot yet show. Non-zero -> BUILD.
     gaps_path: str | None = None
     open_gaps: int | None = None
-    # --- loop round 3 (0.2.533) — every field optional so older run_state.yaml
+    # --- loop round 3 — every field optional so older run_state.yaml
     # files load unchanged. ------------------------------------------------
     # Recipe re-judge (M17). When a terminal decision would rest on a confirmed
     # cap whose fix is a RECIPE edit (no deploy), compute_auto_iterate returns
@@ -282,7 +282,7 @@ class RunState(BaseModel):
     # Pre-build storyboard critique (item 2): {status: clean|applied|asked,
     # review_id, decision, at}. Order/scope questions are asked ONCE, up front.
     storyboard: dict | None = None
-    # --- loop round 4 (0.2.546) ------------------------------------------------
+    # --- loop round 4 ------------------------------------------------
     # The decision `assemble` returned, sealed: {iteration, action, digest,
     # sealed_at, overridden}. ``digest`` hashes the fields that decision rests on
     # (progress/score/fingerprint history, next action, next_judge_full, mode).

@@ -5,8 +5,8 @@ The problem, measured
 ``ddd-concept-eval``'s ``overall_rule: lowest`` makes the run's headline score the
 **minimum over every (scene x gating dimension) cell** — for a 12-scene spec with
 5 gating dimensions that is 60 independently-drawn cells.  Each cell is an LLM
-draw, and the observed per-cell variance is +/-1: in ACE run
-``spark-facilitator/20260813-2126`` scene 12 scored 3 / 2 / 3 and scene 10 scored
+draw, and the observed per-cell variance is +/-1: in an ACE run
+scene 12 scored 3 / 2 / 3 and scene 10 scored
 4 / 3 **on byte-identical frames**.
 
 The minimum of 60 noisy draws is a biased-low statistic that barely responds to
@@ -242,7 +242,7 @@ def plan_confirmations(
 
     A confirmation is worth its ``CONFIRM_K - 1`` extra dispatches only when its
     result could change what the loop does — the gate/convergence reading or a
-    stop decision. On noora-health/20261015-1129 ~32 of 96 judge agents were
+    stop decision. On a real ACE run ~32 of 96 judge agents were
     confirmations and none changed a verdict: the score was held at 2 by the user
     judge and by cells the loop may not edit, so whatever the median, the loop's
     next move was the same. Skipped:

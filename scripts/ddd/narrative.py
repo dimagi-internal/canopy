@@ -1669,9 +1669,8 @@ def main() -> None:
         _cmd_post(args[0], args[1], force="--force" in sys.argv[2:])
 
     elif subcmd == "sync":
-        # Removed in cd436a2 along with auto_version_if_changed, when the story
-        # gained a single writer: there is no two-way reconcile any more, so
-        # `sync` split into `pull` (web -> lock) and `post` (spec -> web). The
+        # There is no two-way reconcile: the story has a single writer, so
+        # `sync` is split into `pull` (web -> lock) and `post` (spec -> web). The
         # dispatch branch and the usage string outlived the function, so typing
         # the verb the usage string ADVERTISED raised
         # `NameError: _cmd_sync is not defined` — and skills still reach for it.

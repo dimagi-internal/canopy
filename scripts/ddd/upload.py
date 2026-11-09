@@ -398,7 +398,7 @@ def _resolve_narrative_review_id(run_state: RunState) -> str | None:
     """The narrative version this run rendered, however it was stamped.
 
     Prefers the explicit ``narrative_review_id`` field (written by the
-    ``narrative post`` command since 0.2.172); falls back to parsing the legacy
+    ``narrative post`` command); falls back to parsing the legacy
     ``narrative_review_url`` so runs stamped by older plugin versions still link.
     """
     explicit = (getattr(run_state, "narrative_review_id", None) or "").strip()
@@ -687,7 +687,7 @@ section {
 # A canopy-web walkthrough URL: the viewer page ``/w/<ws>/walkthrough/<id>`` or
 # its byte stream ``…/content`` (optionally with a ``?t=`` share token, kept
 # intact). The flat forms are matched so an old link is still recognised as a
-# canopy artifact, but canopy-web serves neither any more.
+# canopy artifact, but canopy-web serves neither.
 _CANOPY_W_RE = re.compile(r"/(?:w|walkthrough)/[^/?#]+(?:/content)?/?$")
 
 
@@ -1052,7 +1052,7 @@ def publish_artifact(
         "description": "",
         "visibility": "link",
     }
-    # Which project the artifact belongs to (canopy-web T76): the repo slug and,
+    # Which project the artifact belongs to: the repo slug and,
     # when the env names one, the agent's board project. The session/turn it came
     # from ride the provenance headers; canopy-web stamps them server-side.
     fields.update(artifact_project_fields())

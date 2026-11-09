@@ -36,7 +36,7 @@ dimensions:
     label: "Evidence Sufficiency"
     weight: 0.25
     default_score: 3
-    # Out-of-chain anchor (canopy#265 item 3): "non-assumed" is decided by the
+    # Out-of-chain anchor: "non-assumed" is decided by the
     # run's evidence inventory (evidence.json, produced by ddd-evidence-audit's
     # probes), which classified each item documented | implemented | assumed by
     # actually reading the docs/code. The why-brief's own evidence status field

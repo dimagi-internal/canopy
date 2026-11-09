@@ -7,10 +7,10 @@ name: gws-mcp tests
 #
 # Installs are DETERMINISTIC: plugins/canopy/package-lock.json is committed and
 # this job uses `npm ci`, which installs exactly that tree and fails loudly if it
-# has drifted from package.json. It used to run a bare `npm install` with nothing
-# pinned — re-resolving from the live registry on every run — which reddened every
-# open branch at once when npm's resolver choked (canopy#594) and could equally
-# have gone green on a tree nobody had tested.
+# has drifted from package.json. A bare `npm install` with nothing
+# pinned would re-resolve from the live registry on every run, reddening every
+# open branch at once when npm's resolver chokes and equally able to
+# go green on a tree nobody had tested.
 
 on:
   push:

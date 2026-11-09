@@ -358,7 +358,7 @@ def local_renew(session_id, force):
     except canopy_web.CanopyError as e:
         if "-> 404:" not in str(e):
             raise
-        status = "gone"   # not this person's local turn any more (or never was)
+        status = "gone"   # not this person's local turn (or never was)
     if status != "running":
         state = reopen(state, status)
         if not state:

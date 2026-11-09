@@ -421,7 +421,7 @@ def runner_credential(name_or_id, workspace):
     A runner's tokens and API keys live in a vault only its own device key opens
     : a
     token is signed in on the box and sealed there, an API key sealed in your browser.
-    Nothing takes a pasted value any more, so this prints the list (never a value) and
+    Nothing takes a pasted value, so this prints the list (never a value) and
     the runner's Credentials tab, where you make its vault key, sign a token in, add
     an API key or reorder them.
     """

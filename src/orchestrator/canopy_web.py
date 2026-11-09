@@ -205,7 +205,7 @@ def scope_link(url: str, workspace: Optional[str], base_url: Optional[str] = Non
 # canopy runtime (where every `python -m scripts.ddd.*` runs) sits inside the
 # canopy plugin's own install dir, so without this every DDD call claimed to be
 # "in the 'canopy' agent repo" and warned about a borrowed identity that is
-# simply the operator's (0.2.528, M5).
+# simply the operator's.
 _NON_AGENT_SLUGS = frozenset({"canopy"})
 
 

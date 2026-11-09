@@ -125,8 +125,8 @@ def scene_scores(raw: dict | None) -> dict[int, dict[str, float]]:
     scenes = raw.get("scenes")
     if isinstance(scenes, dict):
         # ``scenes: {'1': {scene, dimensions: {dim: {score}}}}`` — the user-artifact
-        # judge's shape ACE runs. Unread, the floor's scenes were
-        # unknown (``scenes: []``) on every pass of noora-health/20261015-1129.
+        # judge's shape on ACE runs. Unread, the floor's scenes were
+        # unknown (``scenes: []``) on every pass.
         scenes = [
             {**row, "scene": row.get("scene", key)} if isinstance(row, dict) else row
             for key, row in scenes.items()
@@ -552,7 +552,7 @@ def classify_floor(
 # A judge re-words the same defect every pass ("The floating 'Ask an agent'
 # button occludes footer text" -> "'Ask an agent' floating button overlaps the
 # Doll demonstration sparkline"). Keyed on text, a decline re-opens on every
-# re-wording; on noora-health/20261015-1129 ``out_of_scope.json`` grew to 145
+# re-wording; ``out_of_scope.json`` grew to 145
 # text matches for a handful of defects. An id is assigned per (scene,
 # dimension) cell by content overlap with the findings the ledger already
 # knows, so a re-worded finding keeps its id — and with it its decline.

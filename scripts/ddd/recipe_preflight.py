@@ -400,8 +400,8 @@ def preflight(
             for scene_no, raw in enumerate(raw_scenes, start=1):
                 # A ``before:`` hook changes the world between scenes; run it at
                 # the same point the recorder does, so every scene after it is
-                # checked against the world the render will film (0.2.528 could
-                # not preflight past a between-scenes change at all). Preflight
+                # checked against the world the render will film (preflight cannot
+                # otherwise get past a between-scenes change). Preflight
                 # reseeds after its walk when the render will not, so the hook's
                 # effect does not leak into the film.
                 if raw.get("before"):

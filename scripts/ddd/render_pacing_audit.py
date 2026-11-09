@@ -199,7 +199,7 @@ def audit(
     ``audio_expected=False`` is for the screenshot loop's ITERATION clip, which
     has no narration by construction: there "silent" is every frame, so
     "silent + frozen" reduces to "the cursor dwelt" and every hold over 1.5 s
-    was flagged DEAD-AIR — 27 flags of pure noise per iteration (0.2.528, M6).
+    was flagged DEAD-AIR — 27 flags of pure noise per iteration.
     With no audio track and no audio expected, the silence-derived flags
     (DEAD-AIR, SILENT-MOTION) are skipped and said to be; BLANK frames and
     recording bugs still report. A file WITH audio is audited normally either

@@ -2,14 +2,11 @@
 """CI gate: engine source paths with user-facing authoring implications must be
 shipped together with their teaching SKILL.md updates.
 
-Context: in the 14 canopy PRs shipped on 2026-06-01, only #108, #111, #113,
-and #115 explicitly touched SKILL.md when they should have. The others left
-their best practices undocumented for weeks — PRs #100, #101, #102, #105,
-#112, #114 each shipped new spec-author surface (Scene.url, must_succeed,
-prefix syntax, snapshot flags, scroll_to cursor glide, Scene.viewport)
-without updating SKILL.md. Future agents doing /canopy:ddd inherited the
-engine fixes but not the authoring patterns, so the same gaps got audited
-and patched in #115 + #116. This gate prevents the next drift cycle.
+Context: PRs that ship new spec-author surface (Scene.url, must_succeed,
+prefix syntax, snapshot flags, scroll_to cursor glide, Scene.viewport) without
+updating SKILL.md leave their best practices undocumented. Future agents doing
+/canopy:ddd inherit the engine fixes but not the authoring patterns, and the
+same gaps have to be audited and patched later. This gate prevents that drift.
 
 Usage (as a CLI from GitHub Actions):
 
@@ -24,7 +21,7 @@ surfaces in the job log.
 
 It also exits 0 — with a loud SKIPPED message — when the GitHub API cannot be
 read at all, because a gate that could not look has made no finding, and a red
-check on an unread diff is read as "my PR is wrong" (canopy #496).
+check on an unread diff is read as "my PR is wrong".
 
 For testing, the pure logic lives in `check_docs_sync(changed, pr_body)`
 which takes plain inputs and returns a structured result — no subprocess
@@ -68,7 +65,7 @@ TRIGGER_PATHS: dict[str, list[str]] = {
     # here since the narrative-substrate refactor; scripts/ddd/schemas/models.py
     # above is now a re-export shim. Same audience, same required docs.
     #
-    # KNOWN LIMITATION (canopy#547): this file hosts a SECOND author surface with
+    # KNOWN LIMITATION: this file hosts a SECOND author surface with
     # a different audience — the judge-output contract (Finding, Verdict,
     # FIX_KINDS, ROUTES), which is taught in the judge skills (ddd-concept-eval,
     # ddd-arc-eval, ddd-run), not in the two spec-author docs below. This map is
@@ -263,8 +260,8 @@ def fetch_pr_context(
 ) -> tuple[list[str], str]:
     """Pull changed file paths + PR body from the GitHub REST API.
 
-    REST rather than `gh pr view --json` (GraphQL): during the 2026-08-17
-    incident that produced #496, GraphQL returned 503 while REST stayed up.
+    REST rather than `gh pr view --json` (GraphQL): during an outage,
+    GraphQL can return 503 while REST stays up.
     Both are retried; on persistent failure this raises PRContextUnavailable
     and the caller SKIPS the gate rather than failing a PR it never read.
     """
@@ -336,8 +333,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.changed_files is not None:
         # Test / local invocation — skip gh entirely.
         #
-        # Split on ANY whitespace as well as commas. This used to be
-        # comma-or-newline only, which made the natural local invocation —
+        # Split on ANY whitespace as well as commas. Splitting on
+        # comma-or-newline only would make the natural local invocation —
         # pasting `git diff --name-only` output, which is space-separated once
         # it goes through `tr` or `$(...)` — silently produce ONE path
         # containing spaces. That matched no trigger path, so the gate printed

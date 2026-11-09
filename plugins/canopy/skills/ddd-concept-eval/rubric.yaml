@@ -56,14 +56,14 @@ design_findings_output:
   fix_kind_values: [mechanical, options, redesign]
 
 # ─────────────────────────────────────────────────────────────────────────
-# ADDED-EXPLANATION + HARDCODING STANDING RULES (every product type; canopy#786)
+# ADDED-EXPLANATION + HARDCODING STANDING RULES (every product type)
 # ─────────────────────────────────────────────────────────────────────────
 # A clean, clear product states facts through STRUCTURE — labels, fields,
 # status chips, counts, columns, ordering, a view that answers the question.
 # The loop's failure mode is the opposite: every "this is unclear" became one
 # more sentence, tooltip, legend or definition, and every "the narration says X"
 # became a rule keyed on the demo's own data. On the Spark and supply runs
-# (2026-10) 32 of 232 fix recommendations were "add a tooltip / legend /
+# 32 of 232 fix recommendations were "add a tooltip / legend /
 # definition", and fixers shipped "Click a column name for its definition",
 # a seven-item legend, and `_TERMS_GAPS = frozenset({"tender duty terms", …})`.
 #

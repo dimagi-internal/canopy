@@ -1,16 +1,15 @@
-# Python test suite — the gap that let #274 land with an untiered module and
-# silently break main's `test_plugin_boundary` (fixed in #287). check-version
+# Python test suite — without it a PR can land an untiered module and
+# silently break main's `test_plugin_boundary`. check-version
 # and docs-sync validate metadata; nothing validated the code until the gws
 # node workflow arrived, and that only covers plugins/canopy/test/gws.
 #
-# tests/walkthrough USED to be excluded here on the premise that it needs
-# "playwright + a display". It doesn't: no test in that directory calls
-# sync_playwright() or .launch() — they only need the playwright package to be
-# IMPORTABLE, and the whole directory runs in under a second with no browser
-# binaries present. The exclusion meant 315 tests covering record_video.py and
-# the recorder orchestrator ran nowhere: not in CI, and not locally either
-# unless someone remembered `uv sync --extra browser`. A syntax error in
-# record_video.py survived a full local `pytest tests/` because of it.
+# tests/walkthrough is included: it does not need "playwright + a display". No test
+# in that directory calls sync_playwright() or .launch() — they only need the
+# playwright package to be IMPORTABLE, and the whole directory runs in under a
+# second with no browser binaries present. Excluding it would leave the tests
+# covering record_video.py and the recorder orchestrator running nowhere: not in
+# CI, and not locally either unless someone remembered `uv sync --extra browser`,
+# so a syntax error in record_video.py would survive a full local `pytest tests/`.
 name: Python tests
 on: [push, pull_request]
 

@@ -50,7 +50,7 @@ A repo opts in with::
       setup: make serve-demo
       health_url: http://localhost:8000/health/
 
-and since 0.2.554 a repo with a ``deploy_gate`` MUST: :func:`inner_loop_policy`
+and a repo with a ``deploy_gate`` MUST: :func:`inner_loop_policy`
 makes a backlog loop there stop (``stop_inner_loop_required``) unless it is
 configured or declared ``inner_loop: off`` with ``inner_loop_off_reason:``.
 """

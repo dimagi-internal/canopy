@@ -5,10 +5,9 @@ name: docs-sync
 # concept-eval rubric), the corresponding SKILL.md must be updated in the
 # same PR. Opt-out via a `Docs-not-needed: <reason>` line in the PR body.
 #
-# Why: of the 14 canopy PRs shipped on 2026-06-01, only #108, #111, #113, and
-# #115 explicitly touched SKILL.md when they should have. The drift cost a
-# meta-audit PR (#115) and a follow-up (#116). This gate prevents the next
-# drift cycle.
+# Why: PRs that change authoring surface without touching SKILL.md leave best
+# practices undocumented, and the drift costs a meta-audit later. This gate
+# prevents that drift.
 
 on:
   pull_request:

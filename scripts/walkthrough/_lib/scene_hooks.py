@@ -4,7 +4,7 @@ A state-mutating narrative often needs something to happen BETWEEN beats that no
 on-screen action can do: a supplier answers the buyer's question (an agent's MCP
 write), a nightly job runs, a second seat acts. The recorder only had the
 per-render ``setup:`` command, which runs before the browser opens — so the
-first live v1 run (connect-labs supply-sophie-rutf, canopy 0.2.528) had its setup
+first live v1 run (connect-labs supply-sophie-rutf) had its setup
 spawn a detached watcher that fired the write when ``snapshots/scene_4.png``
 appeared, padded scene 4 with three seconds of cursor motion to cover the race,
 and could not preflight anything after scene 4.

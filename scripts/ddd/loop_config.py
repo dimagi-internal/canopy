@@ -128,7 +128,7 @@ Every key is optional. A missing file, a missing block, or a malformed value
 falls back to the defaults below — a config problem must never stop a run, it
 only turns the optional behaviour off (the deploy gate reports ``skipped``).
 
-One deliberate exception (0.2.554, :func:`scripts.ddd.target.inner_loop_policy`):
+One deliberate exception (:func:`scripts.ddd.target.inner_loop_policy`):
 a repo whose ``deploy_gate`` is configured — every fix batch merges, waits on CI
 and deploys before a frame can be judged — must also say how it renders BETWEEN
 checkpoints. Without ``inner_loop:`` (or ``inner_loop: off`` plus a reason)
@@ -153,10 +153,10 @@ class FixedSurface:
     """A surface the loop may not edit, and who can (``loop.fixed_surfaces``).
 
     Configuration, not text-matching after the fact, is the primary way a finding
-    becomes out of scope: on ``noora-health/20261015-1129`` the loop never had a
-    ``fixed_surfaces`` entry, so every reworded finding about the same labs
-    template needed its own text-matched decline (``out_of_scope.json`` grew to
-    145 entries) and none of them said who owned the fix.
+    becomes out of scope: with no
+    ``fixed_surfaces`` entry, every reworded finding about the same labs
+    template needs its own text-matched decline (``out_of_scope.json`` grows to
+    145 entries) and none of them says who owns the fix.
     """
 
     match: str
@@ -241,9 +241,8 @@ class DeployGateConfig:
 
 
 #: Built-in per-step budgets (minutes), under any configured ``<step>_minutes``.
-#: Judges: measured 2-10 min per judge ACE runs; a user judge on
-#: ``noora-health/20261015-1129`` iteration 2 ran 98 min under the 45-min default
-#: and the whole pass waited on it. 20 is twice the slowest healthy judge.
+#: Judges: measured 2-10 min per judge on ACE runs; a user judge that ran 98 min
+#: under a 45-min default made the whole pass wait on it. 20 is twice the slowest healthy judge.
 STEP_DEFAULT_MINUTES: dict[str, float] = {"judge": 20.0}
 
 

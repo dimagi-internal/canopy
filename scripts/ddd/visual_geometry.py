@@ -3,7 +3,7 @@
 Every other per-iteration lens in this pipeline reads TEXT — the captured page
 text, the narration, the extracted numbers. None of them can tell that the
 element carrying a claim rendered at zero height, or that its label is white on
-white. On the ACE run ``bednet-check-2-visit/20260825-1310`` three separate
+white. On a real ACE run three separate
 invisible-element defects scored ``data_fidelity`` 9/9 and ``narrated_numbers``
 9/9 across four iterations, and were only found by a hand-written probe after
 the loop had already given up:

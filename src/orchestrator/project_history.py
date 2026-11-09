@@ -270,7 +270,7 @@ def project_prs(spec: ProjectSpec, checkout: Optional[Path] = None,
     """``{number: {number, head, title, url, merged_at}}`` for every PR merged
     into the default branch since ``spec.since`` that touched a project path.
 
-    The PR list comes from the squash-merge subjects (``…``) of
+    The PR list comes from the squash-merge subjects (``… (#N)``) of
     ``git log <remote>/main -- <paths>`` in a local checkout — exact and cheap —
     and head branches from one ``gh pr list`` call."""
     if not spec.paths:
@@ -349,7 +349,7 @@ def local_transcripts_for(cwds: Iterable[str], users_root: str = "/Users") -> li
 def local_transcripts_by_task(project: str, session_key: str,
                               users_root: str = "/Users") -> list[Path]:
     """Transcripts of an emdash task, found by name when canopy recorded no cwd
-    (activity on sessions folded before canopy-web T75 is thin). emdash names a
+    (activity on older, folded sessions is thin). emdash names a
     task's worktree ``<root>/worktrees/<project>-<hash>/emdash-<key>-<5 chars>``,
     so the key plus the exact 5-character suffix pins it without catching a
     longer sibling key (``supply`` never matches ``supply-demo-ybqkk``)."""

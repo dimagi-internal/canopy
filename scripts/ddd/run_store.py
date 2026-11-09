@@ -9,7 +9,7 @@
 
 Why
 ---
-Until 0.2.563 a run's state (iteration, findings, progress, decisions) lived
+Without the store, a run's state (iteration, findings, progress, decisions) lives
 only in ``~/.canopy/ddd/runs/<repo>/<run_id>/run_state.yaml`` on the machine that
 started it. Another runner could not resume it, two runners could mint the same
 ``run_id`` (canopy-web groups a run's decks and reviews by that string, so their

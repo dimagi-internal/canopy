@@ -292,7 +292,7 @@ _DATE_PREFIX = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})
 
 
 def undated(step) -> str:
-    """A plan step with any leading date ("Oct 13: …", "10/13 - …") removed. Plans are
+    """A plan step with any leading date ("YYYY-MM-DD: …", "10/13 - …") removed. Plans are
     ordered, never scheduled: agents can do unlimited work, so dates on agent steps told the
     principal nothing. Round 2 asks for undated steps; this keeps an
     older or disobedient reply from putting dates on a board task anyway."""

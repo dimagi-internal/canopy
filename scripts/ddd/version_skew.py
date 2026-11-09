@@ -4,8 +4,8 @@ Claude Code fixes a session's Skill registry at session start, so after a
 mid-session plugin update (the fleet auto-updater does this) a judge subagent
 still loads ``canopy:ddd-arc-eval`` from the OLD cache while every
 ``python -m scripts.ddd.*`` call runs the NEW runtime. Nothing errors; the
-instructions and the code simply stop describing the same contract (0.2.528 run:
-skills from 0.2.524, scripts from 0.2.528 — M7).
+instructions and the code simply stop describing the same contract (for example
+skills from one version, scripts from a newer one).
 
 The Skill tool announces each skill's base directory
 (``…/plugins/cache/canopy/canopy/<version>/skills/<name>``), so the version the
