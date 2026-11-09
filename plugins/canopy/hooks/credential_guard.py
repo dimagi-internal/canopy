@@ -90,6 +90,16 @@ ERROR_FIELDS = ("error", "errors", "error_description", "detail", "message")
 
 #: A failed Bash call is judged only when it ran one of these (the agent's own logins).
 CREDENTIALED_COMMAND = re.compile(r"^\s*(?:\S+/)?(?:canopy|gog|bin/[\w.-]+)\b")
+#: A `…/bin/<x>` that is a toolchain's, not an agent repo's: an interpreter, or a bin dir of a
+#: virtualenv, Homebrew, the system or a package manager. 2026-11-09, Hal's chat turn 6023472a
+#: on jj-mbp-cdp was aborted (failure investigation 37) because `<venv>/bin/python bench.py`
+#: matched `bin/[\w.-]+` and the speech model's garbled transcript in its output was then read
+#: as a credential error. Only `canopy`, `gog` and an agent's own `bin/<agent>-…` hold a login.
+_TOOLCHAIN_BIN = re.compile(
+    r"^\s*(?:\S*/)?bin/(?:python[\d.]*|pip[\d.]*|node|npm|npx|uv|uvx|ruby|perl|bash|sh|zsh"
+    r"|pytest|ipython|jupyter|mlx_[\w.-]+)\b"
+    r"|(?:^|/)(?:\.?venv[\w.-]*|env|\.local|\.cargo|\.pyenv|\.nvm|node_modules|homebrew|usr"
+    r"|opt|[\w.-]*conda[\w.-]*)/(?:\S+/)?bin/")
 _SEGMENTS = re.compile(r"&&|\|\||[;|\n]")
 _CD = re.compile(r"^\s*cd(?:\s|$)")
 _ERROR_LINE = re.compile(r"error|fail|refus|denied|exception|traceback", re.IGNORECASE)
@@ -146,7 +156,14 @@ def _segments(command: str) -> list[str]:
 
 
 def runs_credentialed(command: str) -> bool:
-    return any(CREDENTIALED_COMMAND.match(seg) for seg in _segments(command))
+    return any(_credentialed_segment(seg) for seg in _segments(command))
+
+
+def _credentialed_segment(seg: str) -> bool:
+    if not CREDENTIALED_COMMAND.match(seg):
+        return False
+    exe = seg.split(None, 1)[0]
+    return os.path.basename(exe) in ("canopy", "gog") or not _TOOLCHAIN_BIN.match(exe)
 
 
 def is_abort(command: str) -> bool:

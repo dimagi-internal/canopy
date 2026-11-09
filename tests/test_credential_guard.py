@@ -325,3 +325,28 @@ def test_registered_for_every_tool_and_both_post_events():
         [entry] = [e for e in hooks[event] if "credential_guard" in e["hooks"][0]["command"]]
         assert entry["matcher"] == "mcp__.*|Bash"
         assert entry["hooks"][0]["timeout"] > g.ABORT_TIMEOUT
+
+
+@pytest.mark.parametrize("command", [
+    "~/.venv/bin/python bench.py",
+    "cd /w && /Users/j/whisper-bench/.venv/bin/python bench.py 2>&1 | tail -5",
+    "/opt/homebrew/bin/python3 x.py",
+    "/Users/j/x/venv/bin/mlx_whisper a.wav",
+    "node_modules/.bin/tsc",
+])
+def test_a_toolchain_bin_is_not_an_agent_login(command):
+    """2026-11-09, Hal's chat turn 6023472a (failure investigation 37): a venv's bin/python
+    counted as a credentialed `bin/…` command, so a speech model's garbled output was judged."""
+    assert not g.runs_credentialed(command)
+    data = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "error": 'Exit code 1\n{"text": "fic error 401 unauthorized articlesaves"}'}
+    assert not g.credential_failure(data)
+
+
+@pytest.mark.parametrize("command", [
+    "bin/hal-email --to x", "bin/echo_email.py", "/Users/j/repo/bin/ada-email --to j",
+    "/opt/homebrew/bin/gog drive ls", "/usr/local/bin/canopy email read 1", "gog drive ls",
+])
+def test_an_agents_own_logins_are_still_credentialed(command):
+    assert g.runs_credentialed(command)
