@@ -32,6 +32,33 @@ def test_the_autofill_url_is_picked_not_the_bare_portal():
     assert urls == ["https://commcare-connect.awsapps.com/start/#/device?user_code=ABCD-EFGH"]
 
 
+# What AWS CLI 2.34 prints: the code rides inside `request_uri`, there is no
+# `user_code=`, and both URLs are the same link.
+SIGNIN_URL = ("https://us-east-1.signin.aws/platform/authorize?request_uri=urn%3Aietf%3Aparams"
+              "%3Aoauth%3Arequest_uri%3AFAKEREQ123&identitystore_id=d-0000000000")
+AWS_OUTPUT_SIGNIN = f"""Browser will not be automatically opened.
+Please visit the following URL:
+{SIGNIN_URL}
+Then enter the code:
+WXYZ-ABCD
+Alternatively, you may visit the following URL which will autofill the code upon loading:
+{SIGNIN_URL}
+"""
+
+
+def test_the_signin_aws_request_uri_url_is_picked():
+    urls = [u for u in map(aws_cli.parse_device_url, AWS_OUTPUT_SIGNIN.splitlines()) if u]
+    assert urls and set(urls) == {SIGNIN_URL}
+
+
+def test_a_signin_aws_login_pushes_its_url(monkeypatch):
+    _, _ = _patch(monkeypatch, identities=["", "arn:x"], proc=_FakeProc(AWS_OUTPUT_SIGNIN),
+                  cfg=CFG, sent=1)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code == 0, r.output
+    assert "signed in as arn:x" in r.output
+
+
 def test_runner_config_reads_an_inline_token(tmp_path):
     p = tmp_path / "runner.json"
     p.write_text(json.dumps({"base_url": "https://canopy.example/", "token": "cpat_x",

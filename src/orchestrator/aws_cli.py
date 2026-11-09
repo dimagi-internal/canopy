@@ -56,7 +56,10 @@ from orchestrator import canopy_web
 RUNNER_CONFIG_ENV = "CANOPY_RUNNER_CONFIG"
 DEFAULT_RUNNER_CONFIG = Path.home() / ".canopy" / "runner.json"
 # The line `aws sso login --use-device-code` prints with the code already in it.
-_DEVICE_URL = re.compile(r"(https://\S*[?&]user_code=[A-Za-z0-9-]+)")
+# Two shapes: the older portal URL carries `user_code=`; the newer
+# `signin.aws/platform/authorize` URL carries the code inside `request_uri=`. A bare
+# portal URL with neither has no code in it and must not be picked.
+_DEVICE_URL = re.compile(r"(https://\S*[?&](?:user_code|request_uri)=\S+)")
 # How much of the CLI's output a failed login quotes back: the tail is where its error is.
 _SEEN_LINES = 12
 
