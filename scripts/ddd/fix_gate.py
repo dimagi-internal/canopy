@@ -16,7 +16,7 @@ Why each check exists — what a fixer reaches for when it answers a judge inste
 of improving the product:
 
 * **user_prose** — a NEW user-visible sentence (a template text node, or a string
-  literal of ``prose_words``+ words). a batch can ship "Click a column name
+  literal of ``prose_words``+ words). A batch can ship "Click a column name
   for its definition · ↕ sorts" and "Short of target, not yet off target"; the usual judge
   recommendation answered this way is "add a tooltip / legend / definition".
 * **fix_comment** — a comment or docstring narrating the fix: the loop's own
@@ -87,7 +87,7 @@ _LOOP_WORDS = re.compile(
 _MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*"
 #: A concrete calendar date in a comment is the demo's data, not the product's rule.
 _DATA_DATE = re.compile(rf"\b\d{{1,2}}\s+{_MONTHS}\b|\b{_MONTHS}\s+\d{{1,2}}\b(?!\s*:)")
-#: Before/after narration — a comment describing what the screen USED to look like.
+#: Before/after narration — a comment describing what the screen looked like before.
 #: Each one alone is ordinary English; two in one comment block is a story about a fix.
 _STORY = [
     re.compile(p, re.IGNORECASE)

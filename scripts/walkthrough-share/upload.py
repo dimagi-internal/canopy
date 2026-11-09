@@ -407,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         "description": args.description,
         "visibility": visibility,
     }
-    # The project it belongs to (canopy-web T76): --project wins; else the repo
+    # The project it belongs to: --project wins; else the repo
     # (`$CANOPY_PROJECT_SLUG` or the cwd's origin remote) and, when the env names
     # one, the agent's board project. Session/turn ride the provenance headers.
     fields.update(canopy_web.artifact_project_fields())

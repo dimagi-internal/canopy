@@ -320,7 +320,7 @@ def artifact_project_fields(cwd: Optional[str] = None) -> dict:
     `project_slug` — the repo the work is in: `$CANOPY_PROJECT_SLUG`, else the name
     of the cwd's `origin` remote. Never the directory name: inside an emdash
     worktree that is `emdash-<task>-<suffix>`, which names nothing (the reason
-    0 of 63 supply walkthroughs carried a project — canopy-web T76).
+    supply walkthroughs carried no project).
     `agent_project` — the agent's board project (`hal/P5`), only from
     `$CANOPY_AGENT_PROJECT`; when unset canopy-web infers it from the parent
     turn's board task or the DDD run doc, so most callers need not send it.

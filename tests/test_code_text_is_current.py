@@ -10,8 +10,11 @@ must not trip it").
 Runtime strings are held to the same rule for issue/PR numbers (``test_runtime_strings_cite_no_issue_numbers``):
 an error, warning or help text a person reads says what is true and what to do, never "(canopy#123)".
 
-Scans the comments and docstrings of every .py / .sh / .ts / .js under `src/`, `plugins/canopy/`,
-`scripts/`, `hooks/` and `packages/canopy_agent_factory/` (test files of the plugin excluded), and the
+A release number ("0.2.528"), a compact run id ("20261015-1129"), a year-month ("2026-08"), a task
+number ("canopy-web T76") and "any more" date or narrate a statement the same way.
+
+Scans the comments and docstrings of every .py / .sh / .ts / .js / .yml under `src/`, `plugins/canopy/`,
+`scripts/`, `hooks/`, `packages/canopy_agent_factory/` and `.github/` (test files of the plugin excluded), and the
 `_doc`-style strings of `plugins/canopy/agent-core/gating-baseline.json`. Run
 `python tests/test_code_text_is_current.py` to list the hits.
 
@@ -30,7 +33,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRS = ["src", "plugins/canopy", "scripts", "hooks", "packages/canopy_agent_factory"]
+DIRS = ["src", "plugins/canopy", "scripts", "hooks", "packages/canopy_agent_factory", ".github"]
 SKIP = ("node_modules", "/test/", "video-engine", "__pycache__", ".venv")
 JSON_FILES = ["plugins/canopy/agent-core/gating-baseline.json"]
 
@@ -42,10 +45,15 @@ PATTERNS = {
         r"\b(?:Jonathan|Jon|Jackson|Shayoni|Mazumdar|Matthew|Matt|Hayto|Theis|Mary|Rocheleau|"
         r"Gillian|Javetski|Amie|Vaccaro|Andrea)\b|\bjj-mbp[\w-]*\b"
     ),
+    # A release number or a compact run id dates a statement as surely as an ISO date does.
+    "version": r"\b0\.2\.\d{2,3}\b",
+    "runid": r"\b20\d{6}-\d{4}\b",
+    "month": r"\b(?:19|20)\d\d-(?:0[1-9]|1[0-2])\b(?!-\d)",
+    "task": r"\b(?:canopy-web|hal|ace|eva|ada|echo) T\d{2,3}\b",
     "narrative": (
         r"\b(?:formerly|(?:was|were) previously|no longer|used to (?:be|have|do|read|return|drop|"
         r"stop|fold|write|pass|score|truncate|guess|compare|mean|disagree|decode|narrate|publish|"
-        r"enroll|hand|come|work|run|go|take|fall|happen|silently|END|shell|reach|launch))\b"
+        r"enroll|hand|come|work|run|go|take|fall|happen|silently|END|shell|reach|launch))\b|\bUSED to\b|\bany ?more\b"
     ),
 }
 RX = {k: re.compile(v) for k, v in PATTERNS.items()}
@@ -78,6 +86,26 @@ ALLOW = [
         "scripts/walkthrough/_lib/recorder.py",
         r'typed "2026-08-18"',
         "an example input value in a bug explanation, not a reference to when anything happened",
+    ),
+    (
+        "plugins/canopy/scripts/canopy-update-check.sh",
+        r"0\.2\.369 0\.2\.369",
+        "an example of the UPGRADE_AVAILABLE line the script prints when a version is reused: data",
+    ),
+    (
+        "src/orchestrator/doctor.py",
+        r"canopy-0\.2\.342\.dist-info",
+        "an example dist-info directory name showing how the version is cut out: data",
+    ),
+    (
+        "src/orchestrator/provenance.py",
+        r"canopy-cli/0\.2\.590",
+        "an example X-Canopy-Client header value: data",
+    ),
+    (
+        "src/orchestrator/skill_catalog.py",
+        r'"installed_version": "0\.2\.79"',
+        "an example catalog row: data",
     ),
     (
         "plugins/canopy/skills/doc-regeneration/scripts/find_history.py",
@@ -155,7 +183,7 @@ def _files() -> list[Path]:
     for d in DIRS:
         for p in (ROOT / d).rglob("*"):
             s = str(p)
-            if p.is_file() and p.suffix in (".py", ".sh", ".ts", ".js") and not any(x in s for x in SKIP):
+            if p.is_file() and p.suffix in (".py", ".sh", ".ts", ".js", ".yml", ".yaml") and not any(x in s for x in SKIP):
                 found.append(p)
     return sorted(found)
 
@@ -168,7 +196,7 @@ def scan() -> list[tuple[str, int, str, str]]:
     for p, src in targets:
         if p.suffix == ".py":
             texts = _py_texts(src)
-        elif p.suffix == ".sh":
+        elif p.suffix in (".sh", ".yml", ".yaml"):
             texts = _line_texts(src, ("#",))
         elif p.suffix == ".json":
             texts = _json_docs(src)
@@ -193,6 +221,46 @@ def scan_strings() -> list[tuple[str, int, str, str]]:
             for m in STRING_REF.finditer(text):
                 hits.append((rel, line, "ref", text[max(0, m.start() - 40): m.end() + 40].replace("\n", " ")))
     return hits
+
+
+# What deleting a number or a date from a sentence leaves behind: "#.", ", ,", " ," and a lone " ."
+# before the end of a sentence. Kept narrow so a code example in a docstring never trips it.
+ARTIFACTS = re.compile(r"#\.|,[ \t]*,|(?<=[A-Za-z]) ,(?=\s)|(?<=[a-z]) \.[ \t]*$|(?<=[a-z]) \.(?= [A-Z])", re.M)
+
+
+def scan_artifacts() -> list[tuple[str, int, str, str]]:
+    hits = []
+    for p in _files():
+        src = p.read_text(errors="replace")
+        if p.suffix == ".py":
+            texts = _py_texts(src)
+        elif p.suffix in (".sh", ".yml", ".yaml"):
+            texts = _line_texts(src, ("#",))
+        else:
+            texts = _line_texts(src, ("//", "*", "/*"))
+        rel = str(p.relative_to(ROOT))
+        for line, text in texts:
+            for m in ARTIFACTS.finditer(text):
+                hits.append((rel, line, "artifact", text[max(0, m.start() - 40): m.end() + 40].replace("\n", " ")))
+    return hits
+
+
+def test_comment_text_has_no_number_removal_artifacts():
+    bad = [h for h in scan_artifacts() if not _allowed(h)]
+    assert not bad, (
+        "A comment or docstring carries punctuation left by a deleted number or date:\n  "
+        + "\n  ".join(f"{p}:{ln} ...{ctx}..." for p, ln, _, ctx in bad)
+    )
+
+
+@pytest.mark.parametrize("text", ["see #.", "is, , and", "the word , then", "done now .", "end . The next"])
+def test_the_artifact_pattern_catches_leftovers(text):
+    assert ARTIFACTS.search(text)
+
+
+@pytest.mark.parametrize("text", ["the first . ! or ?", "a (#N) example", "x, y and z", "e.g. a, b."])
+def test_the_artifact_pattern_leaves_prose_alone(text):
+    assert not ARTIFACTS.search(text)
 
 
 def _allowed(hit: tuple[str, int, str, str]) -> bool:
@@ -235,6 +303,12 @@ def test_allowlist_has_no_stale_entries():
         "# no longer reads the file",
         "see docs/superpowers/specs/x.md",
         "# formerly `paired_by`",
+        "# Until 0.2.563 a run lived on one machine",
+        "# on noora-health/20261015-1129 the loop stalled",
+        "# pre-2026-07 location",
+        "# the project it belongs to (canopy-web T76)",
+        "# nothing reads it any more",
+        "# tests/walkthrough USED to be excluded",
     ],
 )
 def test_the_patterns_catch_what_they_are_for(text):
@@ -248,6 +322,9 @@ def test_the_patterns_catch_what_they_are_for(text):
         "# the id is #fff and the heading is #1",
         "# version 1.2.3 of the API",
         "# is used to find the folder",
+        "# Used to guess which skill name a proposal means",
+        "# the run id format is YYYYMMDD-HHMM",
+        "# task T22 on the board",
     ],
 )
 def test_the_patterns_leave_current_state_alone(text):

@@ -185,7 +185,7 @@ def load_spec(path_or_slug, *, base_dir=None) -> UnifiedSpec:
 
 
 # ---------------------------------------------------------------------------
-# A composed copy judges can read (M8/M12, 0.2.528)
+# A composed copy judges can read
 # ---------------------------------------------------------------------------
 
 

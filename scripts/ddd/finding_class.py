@@ -10,7 +10,7 @@ prose* ("does my recommendation contain the word 'or'?") and is explicitly told
 extra prompt.  In an UNATTENDED run it is the whole failure: a finding routed to a
 human is a finding that is never fixed.
 
-Measured case (ACE ``spark-facilitator/20260813-2126``, 4 iterations, ~2M tokens,
+Measured case (an ACE run, 4 iterations, ~2M tokens,
 never passed).  The final two blockers were:
 
 1. narration saying "cost" over a panel titled **FACILITATOR EARNINGS**;

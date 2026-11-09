@@ -571,8 +571,8 @@ def _fallback_scan(repo: Path) -> list[TestItem]:
     Uses `_SKIP_TEST_DIRS` (not `_SKIP_SRC_DIRS`) so conventional `test/`,
     `tests/`, and `__tests__/` directories are walked — that's where most
     JS/TS suites actually live. Without this distinction the fallback
-    silently misses every co-located test directory (caught on first
-    real-world run against ACE; canopy 0.2.84 was the broken version).
+    silently misses every co-located test directory (seen on a
+    real-world run against ACE).
     """
     items: list[TestItem] = []
     test_files = [p for p in _walk_files(repo, _SKIP_TEST_DIRS) if _TEST_FILE_RE.match(p.name)]

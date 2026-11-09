@@ -14,7 +14,7 @@ auto-wait for visibility + actionability), and ``Locator.bounding_box()``
 gives us coordinates for the synthetic cursor. This module is the adapter
 between our author syntax and those APIs — nothing more.
 
-What changed vs the original 0.2.141 implementation: ``_box_center`` ran a
+What this replaces: an earlier implementation where ``_box_center`` ran a
 hand-rolled DOM scan ranked actionable-vs-text and ``_glide_to`` polled it
 every 150ms until a deadline. Both were partial reimplementations of what
 Playwright's locator engine already does — and they bypassed the
@@ -325,8 +325,8 @@ def wait_for_target(page: Page, target: str, *, timeout_ms: int = 12000) -> bool
 
     All resolution paths flow through :func:`resolve_target` — that means
     the same prefix syntax + the same role-prefers-actionable cascade as
-    everywhere else. No special-case selector branch (was a 12 s hang for
-    text targets before 0.2.141; the Playwright text engine handles it
+    everywhere else. No special-case selector branch (a special case would hang 12 s for
+    text targets; the Playwright text engine handles it
     correctly here).
     """
     if not target:

@@ -851,7 +851,7 @@ class UnifiedSpec(BaseModel):
     travels with the narrative artifact. See ``narrative.is_narrative_locked``."""
     narrative_locked_at: str | None = None
     """ISO-8601 timestamp the narrative was locked (set alongside narrative_locked)."""
-    # Sync stamps (0.2.176). canopy-web is the source of truth for the narrative
+    # Sync stamps. canopy-web is the source of truth for the narrative
     # (overview + scene beats + personas + build_order); these record which web
     # version this local spec was last hydrated-from / pushed-to, so `narrative
     # pull` can tell "web advanced" from "local edited" and refuse to clobber

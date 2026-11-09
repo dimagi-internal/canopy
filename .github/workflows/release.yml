@@ -4,7 +4,7 @@
 # plugin.json and both marketplace.json fields must agree, and `check-version` fails the
 # PR when they don't. Then it published nothing: zero tags, zero releases, no wheel. The
 # number was rigorously maintained and structurally unusable, because no artifact anywhere
-# WAS canopy 0.2.395.
+# WAS canopy at some version.
 #
 # So every consumer had to install from source, and each one invented its own idea of
 # "current": the cloud box `uv tool install git+<url>` (branch tip, install-once), then

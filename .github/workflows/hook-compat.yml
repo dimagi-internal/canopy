@@ -10,8 +10,7 @@ name: Hook Python compatibility
 # `plugins/canopy/agent-core/*.py` is in scope because that is where the FLEET
 # engines live — `gating_guard.py` and `gdoc_gate.py` are exec'd by every
 # agent's thin loader, so they run under the same unknown user python3 as anything
-# in hooks/, and reach five repos instead of one. They were outside this gate
-# until 2026-08-27.
+# in hooks/, and reach five repos instead of one, so they are inside this gate.
 
 # Runs on every push and PR (no path filter) because it is a REQUIRED check: a path-filtered
 # required check never reports on unrelated PRs and blocks them. It takes seconds.

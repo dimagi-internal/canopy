@@ -48,7 +48,7 @@ walker marks it ``kind: restate``; a gap it marked ``decision`` is demoted to
 ``restate`` when it carries ``finding_class: accuracy``, when ``finding_class``
 classifies its claim + missing capability as accuracy, or when its
 ``build_hint`` itself offers restating the narration / recipe to what is built.
-The first live v1 run (0.2.528, M2) opened the gate for three such gaps, each
+A live v1 run opened the gate for three such gaps, each
 then resolved by restating the recipe.
 
     python -m scripts.ddd.gap_walk check <gaps.json> [--spec <spec>] [--run-id <id>] \

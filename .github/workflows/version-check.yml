@@ -22,7 +22,7 @@ jobs:
           # marketplace.json carries the version in two fields (metadata.version
           # and plugins[0].version). A hand-bump that edits only VERSION +
           # plugin.json silently leaves these stale — exactly what slipped
-          # through in the 0.2.157 bump (#120). `canopy version bump` updates
+          # through in a hand-bump. `canopy version bump` updates
           # all of them; this gate makes the hand-bump drift visible in the PR.
           if [ -f .claude-plugin/marketplace.json ]; then
             MP_BAD=0

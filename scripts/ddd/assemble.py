@@ -38,7 +38,7 @@ def _user_findings(run_dir: Path) -> list[dict]:
 
     ``verdict-user.yaml`` carries its own findings list (scene, dimension, score,
     fix_kind, fix_recommendation) — the same defects a person using the feature
-    would hit. Before 0.2.531 assemble never read it, so they were invisible to
+    would hit. Without reading it, assemble would leave them invisible to
     routing, ``fix_kind`` dispatch and the open-findings stall signal, and the
     orchestrator folded them in by hand. Each is stamped ``source:
     user_artifact`` and given the contract's ``route`` (PRODUCT unless the judge

@@ -136,7 +136,7 @@ def agent_labels(repo_dir, cfg):
 # the agent shut and name its own remedy in the same breath.
 #
 # This was the documented reason the review-wrapper collision went UNRAILED (hal's
-# skills/agent-turn-review § "Why this isn't a gating rail", 2026-08): widening the matcher to
+# skills/agent-turn-review § "Why this isn't a gating rail"): widening the matcher to
 # reach a `Skill` call meant accepting exactly that deadlock, and "a guard that can wedge the
 # agent is worse than the gap it closes" is the fleet's own standard. The objection was correct
 # about the code as it stood; it is fixed here rather than routed around, which is what lets the

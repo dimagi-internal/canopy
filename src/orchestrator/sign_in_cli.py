@@ -399,7 +399,7 @@ def _deliver(prov: Provider, key: str, *, wait: bool) -> None:
 @click.option("--wait/--no-wait", default=False,
               help="Wait for the person to add the secret (up to 4 minutes).")
 def code_cmd(provider_name, wait):
-    """Hand PROVIDER the code from this chat's secrets now ."""
+    """Hand PROVIDER the code from this chat's secrets now."""
     prov = _provider(provider_name)
     _deliver(prov, _key(), wait=wait)
     click.echo(f"Signed in: {prov.what} for up to {_fmt_left(LIFETIME)}.")

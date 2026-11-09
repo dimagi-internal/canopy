@@ -29,7 +29,7 @@ Pre-judge frame lint (DDD-2) — always on, no config
 A score can sit at 2.0 for many iterations on findings a function finds in
 milliseconds; the judges rediscover them, in prose, every pass:
 
-* **internal_id_leak** — "synthetic, ace noora-health/20261015-1129" in the
+* **internal_id_leak** — "synthetic, ace <opp>/<run id>" in the
   report H1 and the opportunity picker (``\\d{8}-\\d{4}``, ``ace <opp>/``). Owner
   ``demo_data``: the seeded names carry the run id.
 * **jargon** — the legend "n<1: too few records" (:data:`DEFAULT_JARGON`; a repo
@@ -137,7 +137,7 @@ def _narration_texts(spec_path: Path | None) -> dict[int, str]:
 # Pre-judge frame lint (DDD-2): leaks, jargon, occlusion, overflow, truncation
 # ---------------------------------------------------------------------------
 
-#: An internal run id on screen: ``20261015-1129`` (ACE run ids) and
+#: An internal run id on screen: ``YYYYMMDD-HHMM`` (ACE run ids) and
 #: ``ace noora-health/`` (an ACE opp path). Both came off the seeded names.
 INTERNAL_ID_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b\d{8}-\d{4}\b", "an internal run id (YYYYMMDD-HHMM)"),

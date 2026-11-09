@@ -123,7 +123,7 @@ def post_review_request(
     tok = _resolve_token(token)
     ws = _require_write_ws()
     request_json = review_request.model_dump(by_alias=True)
-    # The repo this narrative is about (canopy-web T76). Inside request_json, not
+    # The repo this narrative is about. Inside request_json, not
     # beside it: request_json is an open dict on every server version, while a new
     # top-level key would 422 on a server that predates it.
     slug = artifact_project_fields().get("project_slug")

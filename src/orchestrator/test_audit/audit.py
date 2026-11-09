@@ -21,7 +21,7 @@ class CollectResult:
     stamp_dir: Path
     corpus_path: Path
     test_count: int
-    ran_tests: bool  # true if any test runner ran (was misnamed ran_pytest pre-0.2.88)
+    ran_tests: bool  # true if any test runner ran (not only pytest)
     framework: str = "pytest"
 
 

@@ -521,7 +521,7 @@ def _channel_hits(name: str, text: str) -> int:
     return len(_SHARED_CHANNEL.findall(text))
 
 
-# Files the factory does not stamp any more. Not agent-unique work, so never a PROMOTE
+# Files the factory does not stamp. Not agent-unique work, so never a PROMOTE
 # candidate — a leftover is reported by `legacy_gating_hook_findings` instead.
 _RETIRED_STAMPS = frozenset({"hooks/gating_guard.py"})
 

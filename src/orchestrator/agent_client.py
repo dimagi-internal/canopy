@@ -51,7 +51,7 @@ __all__ = ["AgentIdentity", "TaskAction", "AgentClient", "task_idempotency_key",
 _EMDASH_TASK = re.compile(
     r"^(?:emdash-)?(?:"
     r"(?P<task>cx?-.*-[a-z0-9]{4})(?:-[a-z0-9]{5})?"         # current (cx- = a caller's session)
-    r"|(?P<legacy>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?"           # pre-2026-09 names
+    r"|(?P<legacy>.*-\d{4}-\d{4})(?:-[a-z0-9]+)?"           # legacy names
     r")$"
 )
 

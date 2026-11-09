@@ -5,8 +5,8 @@ per_render``), so every minted id changes between renders: ``${round2_tender_id}
 is 92 in one take and 94 in the next. Anything that compares one render with the
 previous one — the judge-scope fingerprints, the regression guard — saw every
 id-bearing action and page as "changed", which meant a state-mutating narrative
-could never reuse a single judged cell (canopy 0.2.528, supply-sophie-rutf: 7/7
-scenes re-judged every iteration) and the regression guard warned on ~10
+could never reuse a single judged cell (every scene re-judged
+every iteration) and the regression guard warned on ~10
 "disappeared" actions every iteration that had not gone anywhere.
 
 The fix is to compare what the SPEC said, not what it resolved to. The render

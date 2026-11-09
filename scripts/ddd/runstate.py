@@ -23,7 +23,7 @@ The DDD directory is resolved by _resolve_ddd_dir() in this precedence order:
 Per-RUN artifacts do NOT live under that directory. _resolve_runs_dir() puts them
 outside the project repo ($HOME/.canopy/ddd/runs/<project>/) because run dirs
 accumulate large generated files and were silently bloating project repos. Only
-context.md remains repo-local (there is no learnings.md any more: a finished
+context.md remains repo-local (there is no learnings.md: a finished
 run's summary is part of its run — scripts.ddd.run_summary). Runs created before this change are
 still read (and kept) in the legacy in-repo location — see _run_dir_for().
 """
@@ -181,7 +181,7 @@ def _repo_identity(repo_root: Path) -> str:
 
 
 def _legacy_runs_dir(ddd_dir: Path) -> Path:
-    """The pre-2026-07 in-repo location. Read-only compatibility."""
+    """The legacy in-repo location. Read-only compatibility."""
     return ddd_dir / "runs"
 
 
@@ -210,12 +210,12 @@ def _run_dir_for(ddd_dir: Path, run_id: str) -> Path:
 
     * The external root wins whenever the run already exists there.
     * A legacy in-repo run that has RENDERED keeps living there, so resuming an
-      in-flight pre-2026-07 run never splits its artifacts across two roots.
+      in-flight legacy run never splits its artifacts across two roots.
     * A legacy in-repo run that holds only Phase-0 files is MIGRATED: its files
       are copied (never moved — they may be committed to the target repo) into
       the external root, and the run continues there. Before this, a Phase 0
       committed to ``.canopy/ddd/runs/<run_id>/`` pulled every render artifact
-      (snapshots, clips, decks, judge passes) into the target repo (0.2.528, M1).
+      (snapshots, clips, decks, judge passes) into the target repo.
     * Otherwise: the external root.
     """
     external = _resolve_runs_dir(ddd_dir) / run_id
