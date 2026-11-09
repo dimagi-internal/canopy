@@ -136,13 +136,17 @@ def test_an_empty_token_is_refused_before_it_reaches_canopy_web():
 
 
 class _FakeProc:
-    def __init__(self, output: str, rc: int = 0):
+    def __init__(self, output: str, rc: int = 0, running: bool = False):
         self.stdout = iter(output.splitlines(keepends=True))
         self._rc = rc
+        self._running = running
         self.killed = False
 
     def wait(self, timeout=None):
         return self._rc
+
+    def poll(self):
+        return None if self._running else self._rc
 
     def kill(self):
         self.killed = True
@@ -272,8 +276,29 @@ def test_no_device_url_is_an_error_not_a_hang(monkeypatch):
     _patch(monkeypatch, identities=[""], proc=proc, cfg=None)
     r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
     assert r.exit_code != 0
-    assert "printed no approval URL" in r.output
+    assert "without printing an approval URL" in r.output
+    assert "exited 255" in r.output
+    # The CLI's own words are the diagnosis; a guessed cause alone hides it.
+    assert "profile is not an SSO profile" in r.output
     assert proc.killed
+
+
+def test_a_login_that_prints_no_url_and_keeps_running_says_so(monkeypatch):
+    proc = _FakeProc("", running=True)
+    _patch(monkeypatch, identities=[""], proc=proc, cfg=None)
+    r = CliRunner().invoke(aws_cli.aws_group, LOGIN)
+    assert r.exit_code != 0
+    assert "still running after 60s" in r.output
+    assert "(it printed nothing)" in r.output
+    assert proc.killed
+
+
+def test_only_the_tail_of_a_long_failure_is_quoted():
+    proc = _FakeProc("".join(f"line {i}\n" for i in range(40)))
+    found, box, seen = aws_cli.threading.Event(), [], []
+    aws_cli._read_device_url(proc, found, box, seen)
+    assert seen == [f"line {i}" for i in range(40 - aws_cli._SEEN_LINES, 40)]
+    assert found.is_set() and box == []
 
 
 def test_each_outcome_is_reported_so_the_feed_stops_offering_the_link(monkeypatch):
