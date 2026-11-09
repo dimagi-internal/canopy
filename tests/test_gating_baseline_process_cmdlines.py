@@ -1,9 +1,9 @@
 """The fleet rail on listing other processes' full command lines (gating-baseline `always`).
 
-WHY (2026-10-15). This tool's shell is started with its environment exported INLINE on its
+WHY. This tool's shell is started with its environment exported INLINE on its
 command line, an agent's service-account key among it. A `pgrep -fl wire.sh`
-(checking whether a background job was still running) printed that key into the transcript,
-and Ada's key had to be rotated. PIDs and bare command names are safe; arguments are not.
+(checking whether a background job was still running) prints that key into the transcript,
+and the key then has to be rotated. PIDs and bare command names are safe; arguments are not.
 
 Run: uv run pytest tests/test_gating_baseline_process_cmdlines.py
 """
@@ -32,7 +32,7 @@ def call(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("cmd", [
-    "pgrep -fl wire.sh",                      # the 2026-10-15 leak
+    "pgrep -fl wire.sh",                      # leaks the exported env
     "pgrep -af canopy",
     "pgrep -l claude",
     "ps aux",
@@ -69,7 +69,7 @@ def test_pids_and_command_names_pass(call, cmd):
 
 def test_no_fleet_procedure_tells_an_agent_to_run_what_this_rail_blocks(call):
     """A doc printing a railed command spends a turn on the block, and it takes the
-    rest of that command down with it. turn.md's liveness check did this (2026-11-03)."""
+    rest of that command down with it. A liveness check in turn.md could do this."""
     offenders = []
     for doc in sorted((PLUGIN / "agent-core").glob("*.md")):
         in_fence = False

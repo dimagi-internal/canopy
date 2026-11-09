@@ -1,5 +1,5 @@
 """`canopy agents connect` (+ `canopy workspace`) — /canopy:setup's catalog step
-(canopy#851, one catalog per person since 2026-10-14). canopy-web + claude mocked."""
+(one catalog per person). canopy-web + claude mocked."""
 from __future__ import annotations
 
 import json

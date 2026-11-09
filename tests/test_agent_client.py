@@ -269,7 +269,7 @@ def test_turn_mode_normalizes_the_pre_rename_gated_value():
 
 
 # ---------------------------------------------------------------------------
-# Workspace placement (@smazumdar, 2026-09-01)
+# Workspace placement
 #
 # The API has always accepted `workspace` on AgentIn, but no CLI verb exposed
 # it, so placing or moving an agent meant a raw curl. That matters because the
@@ -310,8 +310,8 @@ def test_register_sends_the_requested_workspace():
 # The runner names a dispatched worktree `emdash-<task>-<suffix>` but reports the
 # session as `<task>`. The two halves of a turn therefore derived their join key from
 # different strings, `_claim_dispatch_row` matches exactly, and every close-out filed
-# from a dispatched worktree orphaned a fresh row instead of attaching to its own
-# dispatch. Measured 2026-09-05 fleet-wide.
+# from a dispatched worktree would orphan a fresh row instead of attaching to its own
+# dispatch.
 
 def test_a_dispatched_worktree_drops_the_emdash_prefix(tmp_path):
     """The shape the runner actually creates for a dispatched turn."""

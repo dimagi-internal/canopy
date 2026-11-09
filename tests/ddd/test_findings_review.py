@@ -324,7 +324,7 @@ def test_clip_content_url_derivation():
         == "https://canopy-web.example/w/connect/walkthrough/"
         "22222222-2222-2222-2222-222222222222/content?t=cliptok"
     )
-    # Flat and pre-tenancy pages have no stream any more (canopy-web#1338).
+    # Flat and pre-tenancy pages have no stream.
     assert _clip_content_url(
         "https://canopy-web.example/walkthrough/22222222-2222-2222-2222-222222222222"
     ) is None

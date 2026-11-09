@@ -1,10 +1,9 @@
 """Every route canopy calls on canopy-web exists there (src/orchestrator/canopy_web_routes.py).
 
 Why: canopy's canopy-web calls are method + path strings in ~60 modules, and every unit
-test drives them through a fake transport, so a route canopy-web removed kept passing
-here until a real call 404'd. `canopy vault binding` PATCHed `/api/agents/{slug}/
-device-binding` for a week after canopy-web#2322 removed it, and DDD's `resolve` listed
-projects from `/api/agent-runs/projects/` for a month after canopy-web#1249 did.
+test drives them through a fake transport, so a route canopy-web removed would keep passing
+here until a real call 404'd (for example a CLI PATCHing a removed
+`/api/agents/{slug}/device-binding`, or a listing from a removed `/api/agent-runs/projects/`).
 
 The route table is vendored (`tests/fixtures/canopy_web_routes_schema.json`, trimmed from
 canopy-web's OpenAPI document). Refresh it from a canopy-web checkout on origin/main:

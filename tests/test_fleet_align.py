@@ -297,7 +297,7 @@ def test_change_brief_none_for_promote_and_reconcile():
 
 def test_step_headings_are_number_agnostic():
     # "close the turn" at Step 4 vs Step 5 is the SAME step — inserting an extra step upstream must
-    # not make every downstream step read as "missing" (echo's 2026-07 false-positive storm).
+    # not make every downstream step read as "missing" (a false-positive storm).
     tmpl = "## Step 3 — skill self-check\n## Step 4 — close the turn\n"
     agent = "## Step 2 — drain the board\n## Step 4 — skill self-check\n## Step 5 — close the turn\n"
     assert fa.extract_skill_markers(tmpl, []) <= fa.extract_skill_markers(agent, [])
@@ -407,7 +407,7 @@ def test_checkout_drift_warning_quiet_when_clean_or_irrelevant(tmp_path):
     assert fa.checkout_warnings(bases=[base]) == []
 
 
-# ── Windows portability (reported by @smazumdar 2026-09-14, proven against f27c8ff) ──────────
+# ── Windows portability ──────────
 #
 # These run on POSIX CI and still reproduce the Windows failure, because the bug is a
 # path-FLAVOUR bug, not a host bug: PureWindowsPath gives us "skills\turn\SKILL.md" on any
@@ -485,7 +485,7 @@ def test_agent_bases_env_var_accepts_several_and_dedupes(tmp_path, monkeypatch):
 
 
 # ── promotion candidates: agent-UNIQUE artifacts (skills/bin/hooks the factory didn't stamp) ──
-# fleet-align used to compare only the stamped skills + gating.json, so it could never see e.g.
+# fleet-align compares more than the stamped skills + gating.json, so it can see e.g.
 # eva's hooks/gdoc_gate.py or skills/gdoc-review/check_gdoc.py — fleet-generic tooling that grew
 # in one agent's repo. These pin the deterministic candidate pass.
 
@@ -655,7 +655,7 @@ def test_agent_copy_that_does_not_load_canopy_is_still_flagged(tmp_path, monkeyp
     assert "stale fork" in f.note
 
 
-# ── canopy#849: agents no longer register their own gating hook ─────────────────
+# ── agents do not register their own gating hook ─────────────────
 
 def _register_gating_hook(d, rel):
     path = d / rel

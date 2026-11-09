@@ -1,4 +1,4 @@
-"""canopy#790 — converge on a caller-supplied target rubric (scripts.ddd.target_rubric)."""
+"""Converge on a caller-supplied target rubric (scripts.ddd.target_rubric)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -68,7 +68,7 @@ def test_defaults_build_lighter_than_polish():
 
 
 def test_one_low_cell_no_longer_fails_the_criterion(tmp_path):
-    # #492: the weakest-link min failed on a single +/-1 draw. The median does not.
+    # The weakest-link min would fail on a single +/-1 draw. The median does not.
     run_dir, verdicts, dist = _product_run(tmp_path, clarity=[4, 4, 2, 3], trust=[3, 4, 4, 3])
     r = tr.default_for("product", verdicts)
     crit = {c["id"]: c for c in tr.evaluate_pass(r, run_dir=run_dir, verdicts=verdicts, distribution=dist)}
@@ -133,7 +133,7 @@ def test_partition_out_of_rubric_findings_are_advisory_unless_high():
 
 
 def test_mechanical_advisory_rides_the_batch_and_a_decision_is_deferred():
-    """The rubric decides what blocks, not what gets fixed (canopy#788)."""
+    """The rubric decides what blocks, not what gets fixed."""
     r = tr.Rubric(pass_score=3, blocking_dimensions=("clarity",), block_severities=("high",))
     status = [{"id": "dim:clarity", "kind": "dimension", "passing": True}]
     fs = [
@@ -181,7 +181,7 @@ def test_compute_auto_iterate_converges_on_the_target_not_the_min(tmp_path):
     assert action == "stop_done", reason
     assert st.target["converged"] and st.target["source"] == "default:product"
     assert st.target_history and st.target_history[-1]["criteria"]["dim:clarity"] is True
-    # Advisory never holds the run open, but a mechanical one is not DEFERred (#788).
+    # Advisory never holds the run open, but a mechanical one is not DEFERred.
     assert st.findings[0]["route"] == "PRODUCT" and st.findings[0]["target_role"] == "advisory"
 
 

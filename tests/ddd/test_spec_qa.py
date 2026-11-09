@@ -995,10 +995,10 @@ def test_small_walkthrough_under_4_scenes_exempt():
 
 
 # ---------------------------------------------------------------------------
-# canopy#623 — Scene.narrative may be a LIST of beats (the schema allows it and
-# the emitter has always consumed it), but the ≥4-scene VO check called
-# ``.strip()`` on the raw field. A list has no ``.strip``, so the whole gate
-# died with AttributeError instead of returning a Verdict — and because
+# Scene.narrative may be a LIST of beats (the schema allows it and the emitter
+# consumes it), but the ≥4-scene VO check must not call ``.strip()`` on the raw
+# field. A list has no ``.strip``, so the whole gate would die with
+# AttributeError instead of returning a Verdict — and because
 # spec_qa gates ddd-run Step 1, that hard-blocked every full-demo spec written
 # the way the pacing lint recommends.
 # ---------------------------------------------------------------------------

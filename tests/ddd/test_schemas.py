@@ -403,7 +403,7 @@ def test_review_request_narration_can_hold_narration_items():
 
 
 # ---------------------------------------------------------------------------
-# canopy#265 items 1+3 — unified verdict metadata + out-of-chain score cap
+# Unified verdict metadata + out-of-chain score cap
 # ---------------------------------------------------------------------------
 
 
@@ -419,7 +419,7 @@ class TestVerdictOutOfChainCap:
         )
 
     def test_metadata_fields_default(self):
-        # gate defaults to "advisory" (canopy#273 item 4): an unstamped legacy
+        # gate defaults to "advisory": an unstamped legacy
         # verdict must never become a gating, unverified verdict that blocks
         # convergence forever. The gating kinds (concept, user_artifact) are
         # stamped explicitly by their skills / KIND_DEFAULTS.

@@ -1,17 +1,16 @@
-"""canopy#780 — impact-aware reuse, floor-first judging, out-of-scope stop, pass timing.
+"""Impact-aware reuse, floor-first judging, out-of-scope stop, pass timing.
 
-Measured on four ACE Spark runs (``spark-facilitator-programme-cascade-2026-10-06-00{1,2,4,5}``,
-about 40 judged passes, none converged, gating score never above 3.0):
+The failure modes these guard against:
 
-1. Scoped judging reused ZERO scenes: the v2 fingerprint compared each frame byte for
-   byte, and every fix batch edited a shared report template.
-2. Judge tiering ran the user-artifact judge only every third pass, so with the floor
-   on that judge two of every three passes could not move the gating score.
-3. Run ``-004``'s floor was a registry string the loop may not edit; it iterated on to
-   the stall rule anyway.
-4. Nobody could say where a pass's time went without reconstructing it by hand.
+1. Scoped judging reusing ZERO scenes: a fingerprint that compares each frame byte
+   for byte misses every time a fix batch edits a shared report template.
+2. Judge tiering that runs the user-artifact judge only every third pass, so with the
+   floor on that judge two of every three passes cannot move the gating score.
+3. A floor that is a registry string the loop may not edit: the loop must stop
+   instead of iterating on to the stall rule.
+4. A pass's time that can only be reconstructed by hand.
 
-Each class pins one fix. Judge semantics and convergence thresholds are untouched.
+Each class pins one behaviour. Judge semantics and convergence thresholds are untouched.
 """
 from __future__ import annotations
 
@@ -461,7 +460,7 @@ class TestOutOfScopeStop:
         assert state.gating_floor["all_out_of_scope"] is True
 
     def test_a_partial_pass_stops_without_a_checkpoint_detour(self) -> None:
-        # canopy#788: no checkpoint can move a cell the loop may not edit, and
+        # No checkpoint can move a cell the loop may not edit, and
         # floor-first already re-judged the floor's scenes if they changed.
         state, action, _ = self._run(
             declined=[{"match": "Targets are the PDD", "reason": "registry"}], judges=["concept", "user"], judge_full=False

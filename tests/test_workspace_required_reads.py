@@ -1,4 +1,4 @@
-"""canopy-web#1411: an unpinned list by a caller in two tenant trees is a 422.
+"""An unpinned list by a caller in two tenant trees is a 422.
 
 The client keeps calling flat, and on that refusal reads within the HOME
 workspace's tree (CANOPY_WEB_WORKSPACE, or the agent's own ~/.<slug>/.env) —
@@ -226,7 +226,7 @@ def test_a_workspace_named_for_the_call_is_read_alone(monkeypatch):
     assert seen == [("GET", "/api/agents/"), ("GET", "/api/w/connect/agents/")]
 
 
-# -- canopy-web#1422: a pinned read covers the workspaces below the pin ----------
+# -- A pinned read covers the workspaces below the pin ----------
 
 
 def subtree_server(seen, workspaces=None):
@@ -292,8 +292,8 @@ def test_a_caller_outside_the_root_pins_each_top_workspace(monkeypatch):
 
 
 def test_a_server_that_does_not_advertise_subtree_reads_is_fanned_out(monkeypatch):
-    """canopy-web before #1422: a root-pinned read returns only the root, so the
-    client keeps reading each workspace."""
+    """A server that does not advertise subtree reads returns only the root for a root-pinned
+    read, so the client keeps reading each workspace."""
     info = cw._home_tree_info("dimagi", base="https://x.test", token="t",
                               transport=multi_tree_server([]))
     assert info["subtree"] is False

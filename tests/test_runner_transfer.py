@@ -1,10 +1,8 @@
 """`canopy runner transfer` — move a live session onto another box.
 
-Written against a real failure: on 2026-09-12 a session started by accident on
-`cloud-ec2-1` had to be moved to `jj-mbp-cdp`, and there was no command for it.
-Doing it by hand with `place` + `send` moved execution correctly and destroyed
-the session's entire pre-transfer history. These tests pin the parts of the
-client that stop a repeat: refusing a target that could never claim the turn,
+Doing a move by hand with `place` + `send` moves execution but destroys the
+session's entire pre-transfer history. These tests pin the parts of the
+client that prevent that: refusing a target that could never claim the turn,
 refusing the no-op, surfacing the mid-turn conflict with its fix, and never
 reporting the move as done.
 """
@@ -174,7 +172,7 @@ def test_json_output_is_the_servers_answer(fake_http):
 
 
 def test_a_move_onto_someone_elses_box_asks_them_instead_of_refusing(fake_http):
-    """Since canopy-web#1055 the server decides: onto a box you don't run, the
+    """The server decides: onto a box you don't run, the
     transfer becomes a transfer request. The client must send it (not refuse
     client-side) and must say PENDING, never LAUNCHED — nothing moved."""
     calls, responses = fake_http

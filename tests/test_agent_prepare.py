@@ -1,16 +1,16 @@
 """`canopy agent prepare --runner` — the one per-agent preparation every runner calls.
 
-Each test pins a lesson canopy-web's runner/ec2/bootstrap_agents.sh learned the hard way, so
-moving the logic here (2026-10-15, agent-setup-lifecycle.md phase 2) keeps all of them:
+Each test pins a lesson canopy-web's runner/ec2/bootstrap_agents.sh learned the hard way;
+the logic here keeps all of them:
 - the agent's env and the gog client both come from the values canopy-web resolved for the
   runner (the Canopy vault, workspace vault layered under the agent's);
 - the GitHub token rides one git command's environment, never argv or the box;
-- a clone whose pull failed is still provisioned (#965); no clone at all fails the agent but
+- a clone whose pull failed is still provisioned; no clone at all fails the agent but
   still reports;
 - required plugins are pulled every pass, get node deps when the lockfile moved, and get their
-  key files from the agent's Canopy vault (canopy-web#1237);
-- the mailbox is the INSTANCE's (canopy-web), never the repo's (#984);
-- readiness is tri-state: "did not check" is never reported as broken (2026-09-08);
+  key files from the agent's Canopy vault;
+- the mailbox is the INSTANCE's (canopy-web), never the repo's;
+- readiness is tri-state: "did not check" is never reported as broken;
 - canopy-web unreachable is not "unregistered".
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ GH = "ghp_OWNER"
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
     """Every path under ~ (~/.<slug>/.env, its stamp, gog, plugins) lands in tmp — a test
-    must never touch the real machine's agent state (2026-10-15: one did, a stamp)."""
+    must never touch the real machine's agent state."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     # GH_TOKEN too: a cloud runner exports its own, and the box's token would read as the
     # preparer leaking the agent's into a non-git call.
@@ -277,7 +277,7 @@ def test_the_provisioner_runs_the_agents_setup(tmp_path):
 def test_the_provisioner_is_handed_the_env_this_pass_filled(tmp_path):
     """bin/<slug>-setup must not re-resolve what prepare already did: re-resolving goes
     through `canopy agent env`, which needs a person's token a runner never has
-    (cloud-ec2-2, 2026-10-18: ACE's setup failed every pass at exactly that step)."""
+    (setup would fail every pass at exactly that step)."""
     _repo(tmp_path / "agents", setup=True)
     box = Box(tmp_path)
     rep = _prep(tmp_path, box).prepare("ace")
@@ -357,7 +357,7 @@ def test_runner_credentials_read_the_repo_from_runtime():
 
 
 def test_runner_credentials_say_they_are_a_box_refresh():
-    """canopy-web#1563: the runner-update timer refreshes outside any turn; without the
+    """The runner-update timer refreshes outside any turn; without the
     purpose header canopy-web emailed the owner 'read outside a turn' every hour."""
     seen = []
 
@@ -398,7 +398,7 @@ def test_prepare_purpose_from_the_cli(monkeypatch):
     assert agent_cli._prepare_purpose(None).startswith("check: interactive run (by ")
 
 
-# ── the credentials-only pass asks for only what it uses (canopy-web#1563) ──────
+# ── the credentials-only pass asks for only what it uses ──────
 
 def _recording(secret_refs):
     resolves = []

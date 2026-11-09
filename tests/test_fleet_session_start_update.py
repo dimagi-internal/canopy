@@ -1,4 +1,4 @@
-"""Tests for the fleet session-start auto-updater hook (GitHub #357).
+"""Tests for the fleet session-start auto-updater hook.
 
 Covers fleet discovery (who gets updated) and the git/SHA-driven update itself
 (fetch → reset clone → mirror into the version-keyed cache → patch the registry),
@@ -230,8 +230,8 @@ def test_update_one_noop_when_current(tmp_path, monkeypatch):
 def _parked_clone_fixture(tmp_path, monkeypatch):
     """A marketplace clone sitting on a feature branch, with origin ahead.
 
-    Not hypothetical: on 2026-07-28 the canopy marketplace clone was found on
-    `ddd/preflight-applies-scroll`. `git reset --hard origin/main` rewrites
+    Not hypothetical: the canopy marketplace clone can be found on a feature
+    branch. `git reset --hard origin/main` rewrites
     whichever branch is checked out, so the auto-updater silently moved that
     branch ref to main's tip — the commits survived only because they had been
     pushed."""
@@ -410,7 +410,7 @@ class TestMirrorTree:
         assert err and "copy" in err
 
 
-# ── --sync-cache: the /canopy:update Step 2 the skill used to do with rsync ─────────────────
+# ── --sync-cache: the /canopy:update Step 2 cache sync ─────────────────
 
 
 def _clone_with_plugin(tmp_path, version="9.9.9", runtime=True):

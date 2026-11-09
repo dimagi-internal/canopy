@@ -1,8 +1,8 @@
 """credential_guard: a tool failing on the agent's credentials ends the turn, and nothing more runs.
 
-Evidence (2026-10-27, ACE turn 599fad3b on cloud-ec2-2): `resolve_opp_path` returned the
-error below as a SUCCESSFUL result; ACE emailed the outside requester that "this runner has no
-logins", marked her thread read, and the turn finished `done` with nothing alarmed.
+Why: a tool can return the error below as a SUCCESSFUL result (`resolve_opp_path` did); the
+agent then emails the outside requester that "this runner has no logins", marks the thread
+read, and the turn finishes `done` with nothing alarmed.
 """
 import importlib.util
 import io
@@ -126,7 +126,7 @@ def test_not_credential_failures(error):
 
 
 @pytest.mark.parametrize("error", [
-    # The exact error of failure investigation 29 (2026-11-04, ACE turn 9f55abcc).
+    # A real error from a failed-turn investigation.
     'HTTP error 401: Unauthorized - {"type": "about:blank", "title": "Unauthorized", "status": 401, '
     '"detail": "no_assertion: send Authorization: Bearer <a request signed with your site\'s key> '
     '(canopy_sdk.site_agents.request_assertion)", "instance": "/api/sites/agents"}',
@@ -170,9 +170,9 @@ def test_a_short_result_mentioning_it_late_is_not_a_failure():
     assert len(text) < g.SHORT_RESULT and not g.credential_failure(_post(response=text))
 
 
-#: Canopy's own record of an earlier abort, as `get_failure_investigation` returns it. 2026-11-03:
-#: Ada's debug turn 05590519 read this, the guard took the quoted error for Ada's own login, and
-#: the turn debugging one abort was aborted too; so was the audit that read it afterwards.
+#: Canopy's own record of an earlier abort, as `get_failure_investigation` returns it.
+#: A debug turn that reads it must not have the guard take the quoted error for its own login
+#: (which would abort the turn debugging one abort, and the audit that reads it afterwards).
 QUOTING_RECORD = json.dumps({
     "id": 24, "workspace_slug": "dimagi", "fingerprint": "721ad4609aa3c4b0",
     "status": "open",
@@ -236,7 +236,7 @@ def test_grepping_for_the_words_is_not_a_failure():
 
 
 def test_a_commit_message_quoting_the_words_is_not_a_failure():
-    # 2026-11-06, failure investigation 32 (Ada turn 1f130551): `git log` printed a commit whose
+    # `git log` printed a commit whose
     # subject quoted "Not authenticated", in a failed Bash line that also ran bin/ada-….
     log = ("commit 59f2ad03013cf915f9667b55585441fb923765e4\n"
            "Author: Jonathan Jackson <jjackson@dimagi.com>\n"
@@ -335,8 +335,8 @@ def test_registered_for_every_tool_and_both_post_events():
     "node_modules/.bin/tsc",
 ])
 def test_a_toolchain_bin_is_not_an_agent_login(command):
-    """2026-11-09, Hal's chat turn 6023472a (failure investigation 37): a venv's bin/python
-    counted as a credentialed `bin/…` command, so a speech model's garbled output was judged."""
+    """A venv's bin/python is not a credentialed `bin/…` command; counting it as one would
+    judge a speech model's garbled output."""
     assert not g.runs_credentialed(command)
     data = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
             "tool_input": {"command": command},

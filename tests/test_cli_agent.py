@@ -30,9 +30,9 @@ def test_agent_register(fake_http):
 
 
 def test_moving_an_agent_keeps_its_identity(fake_http):
-    """2026-09-29, fizzy: `--workspace` alone 422'd (name is required), and passing
-    `--name` to get past it blanked email/description/persona, since the upsert
-    replaces every field. Omitted fields now come from the agent's current record."""
+    """`--workspace` alone must not 422 (name is required), and passing `--name` to
+    get past it must not blank email/description/persona, since the upsert
+    replaces every field. Omitted fields come from the agent's current record."""
     calls, responses = fake_http
     responses[("GET", "agents/fizzy/")] = (200, json.dumps({
         "slug": "fizzy", "name": "Fizzy", "email": "fizzy@dimagi-ai.com",
@@ -214,7 +214,7 @@ def test_agent_coverage_cli_human_output_leads_with_decayed(monkeypatch):
     assert "no persona.md" in res.output
 
 
-# --- `agent set --task-id` accepts the board's own T<N>, not just the DB id (#454) ---
+# --- `agent set --task-id` accepts the board's own T<N>, not just the DB id ---
 # The ext_id is the ONLY identifier the board surfaces (card label, `agent add` output,
 # `agent turn --task`, `agent dispatch --task`). Requiring the numeric id here cost every
 # agent a failed call plus a JSON grep on each task patch.
@@ -239,10 +239,9 @@ def test_agent_set_unknown_ext_id_names_the_fix(fake_http):
 
 
 # --- `agent set --title` so a card whose HEADLINE is wrong can be corrected ---
-# The API accepted `title` on the task PATCH all along; the CLI just never passed it, so a
-# task whose title asserted something false could only be corrected in fields nobody reads
-# at a glance. (2026-08-07: hal's board carried "every repo's CI is dark since Aug 3" as a
-# headline after that diagnosis was disproven.)
+# The API accepts `title` on the task PATCH; the CLI must pass it, otherwise a
+# task whose title asserts something false could only be corrected in fields nobody reads
+# at a glance (a headline like "every repo's CI is dark" after that diagnosis is disproven).
 
 def test_agent_set_can_correct_a_wrong_title(fake_http):
     calls, _ = fake_http
@@ -263,10 +262,10 @@ def test_agent_set_title_is_omitted_when_not_passed(fake_http):
     assert "title" not in [c for c in calls if c[0] == "PATCH"][0][2]
 
 
-# ── `agent tasks` filtering (canopy#516) ──────────────────────────────────────
-# The board drain runs at the start of EVERY turn for every agent, and used to return
-# the agent's entire task history — 30KB on hal for two open tasks, which overflowed the
-# tool-output limit and got recovered with a hand-written filter each time.
+# ── `agent tasks` filtering ──────────────────────────────────────
+# The board drain runs at the start of EVERY turn for every agent, so it must not return
+# the agent's entire task history (30KB for two open tasks overflows the tool-output
+# limit and forces a hand-written filter each time).
 
 _BOARD = [
     {"ext_id": "T1", "title": "shipped thing", "status": "done"},
@@ -319,7 +318,7 @@ def test_agent_tasks_open_and_status_together_is_an_error(fake_http):
 
 
 def test_agent_move_posts_to_the_move_route(fake_http):
-    """canopy-web#1532: a move carries the agent's history; the CLI is a thin verb over it."""
+    """A move carries the agent's history; the CLI is a thin verb over it."""
     calls, responses = fake_http
     report = {"agent": "fizzy", "source": "shayoni", "destination": "dimagi", "dry_run": False,
               "moved": True, "tables": [], "left_behind": [], "stops_working": []}

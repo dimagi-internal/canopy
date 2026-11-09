@@ -1,8 +1,8 @@
 """tests/conftest.py keeps the suite off real hosts.
 
-A test that fell through to the real transport used to ask PRODUCTION canopy-web, as the
-developer, with the device key hidden — so every suite run raised a "Resolve refused: bad
-or missing device proof" alert to a device-bound agent's owner (eva, 2026-10-22)."""
+A test that falls through to the real transport would ask PRODUCTION canopy-web, as the
+developer, with the device key hidden — so every suite run would raise a "Resolve refused: bad
+or missing device proof" alert to a device-bound agent's owner."""
 import urllib.error
 import urllib.request
 

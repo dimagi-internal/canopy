@@ -1,4 +1,4 @@
-"""What a runner isolation unit needs from the device-key CLI (canopy-web PR 6, spec §2).
+"""What a runner isolation unit needs from the device-key CLI.
 
 * A unit on an EC2 box must make a SOFTWARE signing key: `ensure()` otherwise picks aws-iam
   wherever the instance role answers. `--kind software` and `$CANOPY_DEVICE_KEY_KIND=software`

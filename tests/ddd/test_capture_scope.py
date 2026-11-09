@@ -1,10 +1,9 @@
-"""canopy#785 — re-film only what a batch changed, and keep the rest of the last render.
+"""Re-film only what a batch changed, and keep the rest of the last render.
 
-Measured: connect-labs ``supply-sophie-sheets-2026-10-06-001`` made 11 full
-recordings of 9 scenes; ACE Spark ``-002`` made 32. Judges between checkpoints
-read only stills, and a ``--scene`` render overwrote the report and manifest, so
-it could not be used to re-film a subset. These pin the planner, the recorder's
-merge, and the bookkeeping that makes the saving measurable.
+Judges between checkpoints read only stills, so a full recording per pass is
+wasted work, and a ``--scene`` render must not overwrite the report and manifest
+or it could not be used to re-film a subset. These pin the planner, the
+recorder's merge, and the bookkeeping that makes the saving measurable.
 """
 from __future__ import annotations
 

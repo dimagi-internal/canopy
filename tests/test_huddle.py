@@ -416,7 +416,7 @@ def test_gates_with_a_brief_take_brief_numbers():
     ("  ", ""),
 ])
 def test_undated_strips_only_a_leading_date(step, want):
-    # Jonathan, 2026-10-12: "having dates next to work makes no sense, you can do infinite work"
+    # The rule: having dates next to work makes no sense, you can do infinite work.
     assert H.undated(step) == want
 
 

@@ -1,9 +1,8 @@
-"""#625 — a render must not silently change frame size mid-loop.
+"""A render must not silently change frame size mid-loop.
 
-Origin: ACE Phase 7 run spark-fcap-facilitation-2026-09-08-001 rendered
-iterations 0-2 at 1440x900; a spec rebuilt after a killed session dropped the
-viewport keys and iteration 3 re-rendered at 1280x720 with only a banner line
-to show for it.
+If iterations 0-2 render at 1440x900 and a spec rebuilt after a killed session
+drops the viewport keys, a later iteration would re-render at 1280x720 with only
+a banner line to show for it.
 """
 
 from __future__ import annotations

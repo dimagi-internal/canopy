@@ -1,6 +1,6 @@
 """`agent_bootstrap._operator_token()`: the operator's PAT for operator-authorized calls.
 
-canopy#945: inside an agent's session CANOPY_WEB_PAT is usually the agent's own PAT, which
+Inside an agent's session CANOPY_WEB_PAT is usually the agent's own PAT, which
 `/credentials/resolve` refuses — so there the workbench-token must come first.
 """
 from orchestrator import agent_bootstrap, canopy_web

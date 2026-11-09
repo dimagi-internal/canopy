@@ -1,19 +1,18 @@
 """The fleet review-wrapper rail, and the fail-closed exemption that makes it safe
 (`plugins/canopy/agent-core/gating-baseline.json` `always` + `gating_guard.py`).
 
-WHY THIS FILE EXISTS (2026-08-27). Every agent that ships `skills/agent-turn-review/`
+WHY THIS FILE EXISTS. Every agent that ships `skills/agent-turn-review/`
 owns a NAMESPACED wrapper (`<slug>:agent-turn-review`) carrying its own send path,
 done-claim rules and gates. `canopy:agent-turn-review` is the BODY that wrapper
 delegates to. Calling the body directly — or the bare name — passes the checklist
 while silently skipping every agent-specific step.
 
-`canopy agent-review` found that bypass on two of the three agents reviewed that day.
-Hal's wrapper PREDICTED it in its own opening paragraph ("a wrapper you can walk
-around is not a wrapper") and was walked around anyway; ace's wrapper actively
-INSTRUCTED it. Prose asking the model to comply is precisely what failed, twice,
-which is the standing argument for a rail.
+`canopy agent-review` finds that bypass. Hal's wrapper predicts it in its own
+opening paragraph ("a wrapper you can walk around is not a wrapper"); a wrapper
+that instructs it is the worst case. Prose asking the model to comply is precisely
+what fails, which is the standing argument for a rail.
 
-The rail could not exist before because of a real deadlock, documented in hal's
+The rail has to work around a real deadlock, documented in hal's
 wrapper under "Why this isn't a gating rail": reaching a `Skill` call means putting
 `Skill` in the PreToolUse matcher, and `gating_guard` fails CLOSED for any agent that
 mounts channels — so a degraded canopy install would block EVERY skill invocation,

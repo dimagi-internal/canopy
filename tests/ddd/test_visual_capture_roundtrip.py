@@ -1,4 +1,4 @@
-"""The capture JS itself, against a real browser — canopy#525.
+"""The capture JS itself, against a real browser.
 
 ``test_visual_geometry.py`` tests the RULES against fixtures. This tests the
 half that fixtures cannot reach: whether the JavaScript in

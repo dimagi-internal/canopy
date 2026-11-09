@@ -34,8 +34,8 @@ def test_current_repo_has_no_error_drift():
 def test_current_repo_is_strict_clean():
     """The real checkout must be clean of WARNINGS too — CI gates on --strict.
 
-    Warnings used to be advisory here, which is how an over-cap description
-    survived (#389). Since the `structure-drift` workflow runs `--strict`, any
+    Warnings are not merely advisory here: an over-cap description would
+    survive. Since the `structure-drift` workflow runs `--strict`, any
     warning red-fails CI; asserting it in pytest surfaces that locally instead
     of on the PR.
     """
@@ -175,9 +175,9 @@ def test_skill_description_budget_detected(tmp_path):
 def test_description_budget_covers_agents_and_commands(tmp_path, kind, subdir, label):
     """agents/ and commands/ descriptions count against the cap too.
 
-    The check originally globbed `skills/*/SKILL.md` only, so a 1133-char
-    description on `plugins/canopy/agents/ddd.md` sat over the cap while the
-    audit reported clean (#389). Claude Code surfaces all three kinds in the
+    The check must not glob `skills/*/SKILL.md` only, or a 1133-char
+    description on `plugins/canopy/agents/ddd.md` would sit over the cap while the
+    audit reported clean. Claude Code surfaces all three kinds in the
     system prompt, so all three must be measured.
     """
     root = _make_repo(tmp_path)

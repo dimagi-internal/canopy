@@ -313,10 +313,9 @@ def test_collect_falls_back_when_vitest_unavailable(tmp_path: Path):
 def test_collect_fallback_finds_tests_in_test_directory(tmp_path: Path):
     """Regression: fallback scan must walk into `test/`, `tests/`, `__tests__/`.
 
-    Bug in canopy 0.2.84: `_fallback_scan` used `_SKIP_SRC_DIRS` (which
-    skips `test`/`tests`/`__tests__`) instead of `_SKIP_TEST_DIRS` (which
-    doesn't), silently missing co-located test directories — the standard
-    JS/TS layout. Surfaced first time against a real repo (ACE).
+    `_fallback_scan` must use `_SKIP_TEST_DIRS` (which doesn't skip
+    `test`/`tests`/`__tests__`), not `_SKIP_SRC_DIRS` (which does), or it
+    silently misses co-located test directories — the standard JS/TS layout.
     """
     (tmp_path / "test").mkdir()
     (tmp_path / "test" / "lib").mkdir()
@@ -543,7 +542,7 @@ def test_apply_from_dir_reads_framework_from_corpus(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Issue #42 — sibling describes with the same leaf name must not collapse
+# Sibling describes with the same leaf name must not collapse
 # ---------------------------------------------------------------------------
 
 def test_scan_tests_recovers_describe_path_for_shared_leaf():
@@ -590,7 +589,7 @@ def test_scan_tests_skips_test_calls_inside_strings_and_comments():
 
 
 def test_collect_does_not_collapse_sibling_describes_with_shared_leaf(tmp_path: Path):
-    """Issue #42 regression: vitest list emits flat leaf names but the
+    """Regression: vitest list emits flat leaf names but the
     collector must still produce one TestItem per source occurrence.
     """
     (tmp_path / "vitest.config.ts").write_text("export default {}\n")
@@ -656,7 +655,7 @@ def test_collect_backfills_dynamic_test_names_from_list(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Issue #43 — quote-char truncation in fallback scan
+# Quote-char truncation in fallback scan
 # ---------------------------------------------------------------------------
 
 def test_fallback_scan_preserves_inner_quotes(tmp_path: Path):
@@ -712,7 +711,7 @@ def test_is_in_string_or_comment_detects_line_comment():
 
 
 # ---------------------------------------------------------------------------
-# Issue #44 — explicit source-roots for module inventory
+# Explicit source-roots for module inventory
 # ---------------------------------------------------------------------------
 
 def test_module_inventory_honors_explicit_source_roots(tmp_path: Path):
@@ -790,9 +789,9 @@ def test_locate_test_returns_line_of_it_call():
 
 
 # ---------------------------------------------------------------------------
-# has_real_assertion — nested expect() args (regression: pre-0.2.88 the regex
-# used [^)]* and silently flagged ~40% of real vitest tests as non-assertive
-# because the expect() argument contained inner parens).
+# has_real_assertion — nested expect() args (regression guard: a regex using [^)]*
+# silently flags real vitest tests as non-assertive when the expect() argument
+# contains inner parens).
 # ---------------------------------------------------------------------------
 
 def _analyze_body(tmp_path: Path, body: str):
@@ -856,9 +855,9 @@ def test_has_real_assertion_false_when_no_matcher(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# _vitest_run_json — modern vitest 4.x `files`/`tasks` tree shape. Pre-0.2.88
-# the runner only parsed the legacy testResults shape, so every test on a
-# vitest 4.x suite came back with runtime: null.
+# _vitest_run_json — modern vitest 4.x `files`/`tasks` tree shape. A runner
+# that only parses the legacy testResults shape returns runtime: null for every
+# test on a vitest 4.x suite.
 # ---------------------------------------------------------------------------
 
 def test_vitest_run_json_parses_files_task_tree(tmp_path: Path):
@@ -976,8 +975,8 @@ def test_vitest_run_json_uses_ancestor_titles_for_nodeid(tmp_path: Path):
 
 
 def test_fallback_scan_includes_describe_paths(tmp_path: Path):
-    """Pre-0.2.89 _fallback_scan stripped describes, producing `<file>::<leaf>`
-    nodeids that never matched runtime data's `<file>::<describe>::<leaf>`."""
+    """_fallback_scan must keep describes: `<file>::<leaf>` nodeids would never
+    match runtime data's `<file>::<describe>::<leaf>`."""
     from orchestrator.test_audit.adapters.vitest_adapter import _fallback_scan
 
     repo = tmp_path / "repo"

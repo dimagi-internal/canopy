@@ -1,9 +1,9 @@
-"""A bare text target that is only PART of a larger node must resolve fast (canopy#912).
+"""A bare text target that is only PART of a larger node must resolve fast.
 
-``_resolve_via_text`` used to ``wait_for`` the exact ``get_by_text`` match before
-the substring one. When the visible text sat inside a larger node there was no
-exact match, so that wait ran out its whole half-budget (~3 s at the default
-6 s timeout) before the substring path ran: 3.83 s per hover against 0.83 s with
+``_resolve_via_text`` must not ``wait_for`` the exact ``get_by_text`` match before
+the substring one. When the visible text sits inside a larger node there is no
+exact match, so that wait runs out its whole half-budget (~3 s at the default
+6 s timeout) before the substring path runs: 3.83 s per hover against 0.83 s with
 an explicit ``text:`` prefix. These tests drive the resolver against a fake page
 with a fake clock — a blocking ``wait_for`` on a locator with no visible match
 advances the clock by its full timeout, exactly as Playwright would.

@@ -17,9 +17,8 @@ def test_ddd_auth_reexports_canopy_web():
 
 
 def test_ddd_resolve_token_delegates_in_strict_agent_mode(monkeypatch):
-    """DDD's resolve_token is the canonical one with agent_strict=True (ace#2805:
-    a DDD write must never borrow the operator's token in an agent's session) —
-    a delegation, not a copy of the precedence."""
+    """DDD's resolve_token is the canonical one with agent_strict=True (a DDD write must
+    never borrow the operator's token in an agent's session) — a delegation, not a copy of the precedence."""
     seen = {}
 
     def fake(token, *, agent_strict=False):

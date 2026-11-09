@@ -157,10 +157,9 @@ def test_cli_accepts_the_separator_with_no_option_before_it(monkeypatch):
 
 # --- The third verdict -----------------------------------------------------
 #
-# Found by dogfooding: pointing this at canopy#546's fix reverted the whole
-# file, which removed a NEW function, which killed every test importing it at
-# collection. Non-zero exit, so the first version called it a GATE — a false
-# pass on the commonest shape there is.
+# Reverting a whole file can remove a NEW function, which kills every test
+# importing it at collection. That exits non-zero, but calling it a GATE would
+# be a false pass on the commonest shape there is.
 
 
 def test_a_collection_error_is_inconclusive_not_a_gate():

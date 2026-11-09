@@ -1,7 +1,7 @@
-"""Tests for the external-dependency checks (canopy #614).
+"""Tests for the external-dependency checks.
 
 The keychain case these cover cost a fleet box ~85 minutes of blocked inbox
-polls and ~50 futile "Always Allow" clicks on 2026-09-07.
+polls and ~50 futile "Always Allow" clicks.
 """
 import json
 import subprocess
@@ -88,7 +88,7 @@ def _bin(tmp_path, mtime_epoch):
 
 
 def test_flags_the_2026_09_07_state(tmp_path):
-    """The real incident: token minted 2026-07-14, gog upgraded 2026-08-28."""
+    """The real incident: a token minted before gog was upgraded."""
     binary = _bin(tmp_path, datetime(2026, 8, 28, tzinfo=timezone.utc).timestamp())
     r = _runner_for({("security", "find-generic-password"): _kc("20260714145255Z")})
     res = dh.check_gog_keychain_trust(_ident(), runner=r, binary_resolver=lambda: binary)
@@ -136,7 +136,7 @@ def test_skips_when_gog_absent(tmp_path):
 
 # ------------------------------------- keychain trust: prompt-log confirmation
 #
-# 2026-10-14: the date heuristic fired on jjackson's Mac while gog polled five
+# The date heuristic fired on a laptop while gog polled five
 # mailboxes with zero keychain prompts. The prompt log is the ground truth.
 
 _LOG_HEADER = "Timestamp               Ty Process[PID:TID]\n"

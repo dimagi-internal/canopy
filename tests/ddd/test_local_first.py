@@ -1,10 +1,9 @@
-"""canopy#787 — the inner loop stays on; deployed labs is for the pass that decides.
+"""The inner loop stays on; deployed labs is for the pass that decides.
 
-Measured: ``supply-sophie-sheets-2026-10-06-001`` rendered iterations 1-2 on
-``localhost:8000``, then a new scene filmed a clone "whose data exists only on
-labs", the inner loop was switched off for the run, and every later fix paid
-merge + ``deploy-labs.yml`` (7 deploys, ~3 of 9.6 hours waiting). And with the
-inner loop on, every third (full) pass still went through PR, CI and deploy.
+Why: when a scene films a clone "whose data exists only on labs" and the inner
+loop is switched off for the run, every later fix pays merge +
+``deploy-labs.yml`` and most of the time goes to waiting. And with the inner
+loop on, every third (full) pass still goes through PR, CI and deploy.
 """
 from __future__ import annotations
 

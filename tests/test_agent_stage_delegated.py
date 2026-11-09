@@ -40,7 +40,7 @@ def test_a_withdrawn_loan_removes_the_staged_copy(monkeypatch, tmp_path):
 
 
 def test_skips_when_the_only_token_is_the_agents_own(monkeypatch, tmp_path):
-    """canopy#945: asking /credentials/resolve with the agent's own PAT can only 403 —
+    """Asking /credentials/resolve with the agent's own PAT can only 403 —
     skip with a clear line, and leave a copy someone else staged alone."""
     (tmp_path / ".hal").mkdir()
     (tmp_path / ".hal" / ".env").write_text("CANOPY_WEB_PAT=hal-own\n")

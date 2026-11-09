@@ -1,5 +1,5 @@
 """A cloud runner's own Claude credentials, opened from the vault that holds them
-(canopy-web spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md).
+(canopy-web's runner-claude-credentials-in-the-vault design).
 
 canopy-web answers only with ciphertext in an agent's workspace-vault layer shape, so
 the box opens it with the code that opens those. Real crypto: a value is read only if

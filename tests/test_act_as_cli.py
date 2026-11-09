@@ -386,7 +386,7 @@ def test_skill_names_every_verb():
     assert "as <person>" in text
 
 
-# --- chat flow, recovery, flaky network (first real use, 2026-10-28) ----------
+# --- chat flow, recovery, flaky network ----------
 
 LIST = ("GET", "/api/me/act-as-requests/")
 

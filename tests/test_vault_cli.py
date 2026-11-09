@@ -1,4 +1,4 @@
-"""`canopy vault` (canopy#946): an agent's credentials on canopy-web, and this machine's device key.
+"""`canopy vault`: an agent's credentials on canopy-web, and this machine's device key.
 
 What is pinned:
 - status lists each credential canopy-web holds for the agent (set / missing, last read) and
@@ -121,7 +121,7 @@ def test_device_kind_tpm_off_windows_is_a_clear_error(monkeypatch):
 # ── runner-session: a runner signs in with its device key, never a PAT ────────────
 
 def test_runner_session_sends_only_the_device_proof(monkeypatch):
-    """canopy-web #1594's contract: the runner id in the body, the proof for THIS
+    """canopy-web's contract: the runner id in the body, the proof for THIS
     url, no Authorization header at all."""
     from orchestrator import device_key
 

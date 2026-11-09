@@ -1,8 +1,7 @@
 """Writing a private file works where os.fchmod doesn't exist (Windows before Python 3.13).
 
-2026-10-28, failure investigation 17: an ace turn on a Windows laptop aborted because gog's
-OAuth client file was never written, and `canopy agent bootstrap` — the prescribed fix — wrote
-it through an unguarded os.fchmod.
+An ace turn on a Windows laptop aborts if gog's OAuth client file is never written, so
+`canopy agent bootstrap` must not write it through an unguarded os.fchmod.
 """
 import os
 

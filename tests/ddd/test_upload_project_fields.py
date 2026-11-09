@@ -1,4 +1,4 @@
-"""The DDD uploader sends the artifact's project (canopy-web T76)."""
+"""The DDD uploader sends the artifact's project."""
 from __future__ import annotations
 
 import pytest

@@ -1,9 +1,9 @@
 """closeout: the verdict an unattended incident turn may end on is computed, not typed.
 
-Fixtures are the audit cases (Ada, 2026-10-29) over Hal's CloudWatch alarm turns
-2026-08-26..10-29: 36 ended "✅ Session complete — safe to close.", ~12 had closed the incident.
-Each case below is a quoted turn note reduced to the facts it states; every one of them was
-"complete" and none of them should have been.
+Fixtures are audit cases over Hal's CloudWatch alarm turns: in the audited set, 36 ended
+"✅ Session complete — safe to close." while only ~12 had closed the incident.
+Each case below is a quoted turn note reduced to the facts it states; every one of them
+would read as "complete" and none of them should.
 """
 import json
 
@@ -33,10 +33,10 @@ def hal_task(what="re-check", task="T31", when="2026-10-30T10:00Z"):
     return {"what": what, "owner": owner}
 
 
-# ---- the 10:12Z 2026-10-29 cloud turn (a72a5d39) -------------------------------------------
+# ---- a 10:12Z cloud turn -------------------------------------------
 # "the 09:56Z episode never cleared. The alarm re-fired at 10:01, 10:06 and 10:11Z ... It still
 #  asks someone with AWS SSO to pull per-path response times ... the cause is still
-#  undiagnosed. The slow workflow-run page (#2514) is the candidate, unconfirmed ... I only
+#  undiagnosed. The slow workflow-run page is the candidate, unconfirmed ... I only
 #  looked at the end of its output, so I didn't confirm the workspace-refresh step succeeded."
 TURN_1012Z = {
     "subject": "labs-jj-alb-latency-high",
@@ -69,7 +69,7 @@ def test_the_1012z_turn_with_owners_recorded_is_needs_you():
                              "--profile labs` so Hal can pull per-path latency. [closeout: NEEDS_YOU]")
 
 
-# ---- 2026-10-14 web-cpu: "CPU attribution stays unconfirmed" -------------------------------
+# ---- web-cpu: "CPU attribution stays unconfirmed" -------------------------------
 def test_cause_unconfirmed_with_nobody_owning_the_next_step_is_incomplete():
     v = co.compute(rec(incident={"state": "OK", "checked_via": "alarm_mail:x (OK)"},
                        cause={"status": "unknown"}, remedy="none"))
@@ -141,7 +141,7 @@ def test_an_actual_dispatch_is_owned():
     assert v.verdict == co.MONITORING
 
 
-# ---- "filed an issue" treated as done (connect-labs #2575, #2768, #2769, #1906 unassigned) --
+# ---- "filed an issue" treated as done (issues with no owner) --
 def test_a_filed_issue_nobody_owns_is_rejected():
     v = co.compute(rec(remedy="proposed", open_items=[
         {"what": "connect-labs#2769", "owner": None},

@@ -1,4 +1,4 @@
-"""Unit tests for per-action ``scene_index`` stamping (PR #105 gap 2).
+"""Unit tests for per-action ``scene_index`` stamping.
 
 The DDD orchestrator reported every action in ``run-report.json`` came back
 with ``scene_index: None``. Looking at the code: the orchestrator's

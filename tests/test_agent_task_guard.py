@@ -1,7 +1,7 @@
 """agent_task_guard: a turn holding an agent task cannot end before its result is accepted.
 
-Evidence (2026-10-27, Jonathan designing agent tasks): "we will likely have you respond too
-soon" — an agent that answers in chat or summarises and stops leaves the calling page waiting.
+Rationale: an agent that answers in chat or summarises and stops, instead of
+submitting its result, leaves the calling page waiting.
 """
 import importlib.util
 import io

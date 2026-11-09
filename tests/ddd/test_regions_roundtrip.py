@@ -1,4 +1,4 @@
-"""The region capture JS against a real browser, through the judge scope — canopy#780.
+"""The region capture JS against a real browser, through the judge scope.
 
 ``test_impact_floor_timing.py`` pins the rules on synthetic frames. This runs the
 half that fixtures cannot reach: whether ``regions.capture`` finds the scene's

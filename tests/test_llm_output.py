@@ -1,4 +1,4 @@
-"""The one LLM-stdout → YAML-list parser (canopy#487).
+"""The one LLM-stdout → YAML-list parser.
 
 The regression these lock down: every `claude -p` gate in the tree asks for "a YAML
 list" and five separate call sites stripped the code fence ONLY when the answer began
@@ -34,7 +34,7 @@ PREAMBLE_THEN_FENCE = (
 
 
 def test_preamble_before_fenced_block_still_parses():
-    """The exact 2026-08-14 failure: the verify pass DID reach a verdict."""
+    """A verify pass that DID reach a verdict must not lose it to a preamble."""
     parsed = parse_yaml_list(PREAMBLE_THEN_FENCE)
     assert [item["verdict"] for item in parsed] == ["live", "shipped"]
     assert parsed[0]["index"] == 0

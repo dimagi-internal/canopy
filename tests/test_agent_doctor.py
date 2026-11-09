@@ -283,13 +283,13 @@ def test_cli_agent_doctor_all_sweeps_fleet_and_gates_on_any_failure(tmp_path, mo
 
 
 # --------------------------------------------------------------------------------------
-# review tweaks (2026-07-03): hook wiring, zero-rails, self-managed provisioning,
+# hook wiring, zero-rails, self-managed provisioning,
 # full remediation
 # --------------------------------------------------------------------------------------
 
 def test_hook_wiring_warns_when_agent_still_registers_its_own_guard(tmp_path):
-    """canopy#849: canopy's session hook enforces config/gating.json now. An agent hook is a
-    migration leftover — WARN (so fleet health names it), never FAIL."""
+    """canopy's session hook enforces config/gating.json. An agent hook is a
+    leftover — WARN (so fleet health names it), never FAIL."""
     result = check_hook_wiring(_agent_repo(tmp_path))
     assert result.ok and result.warn
     assert ".claude/settings.json" in result.detail and "hooks/gating_guard.py" in result.detail
@@ -492,7 +492,7 @@ def test_gating_still_fails_when_no_channels_and_no_local_rails(tmp_path):
 
 def test_hook_wiring_warns_on_plugin_style_hooks_json(tmp_path):
     """ace registers its guard in hooks/hooks.json — and because plugins are installed
-    user-scope, it fired in every session on the machine (canopy#849)."""
+    user-scope, it fired in every session on the machine."""
     repo = _agent_repo(tmp_path, hooks=False)
     (repo / "hooks").mkdir()
     (repo / "hooks" / "hooks.json").write_text(json.dumps({
@@ -580,7 +580,7 @@ def test_required_plugins_na_when_none_declared(tmp_path):
 
 
 def test_required_plugins_fails_when_dependency_absent(tmp_path):
-    """Eva's real 2026-07-26 state: her OWN plugin installed, chrome-sales — which every
+    """A real state (eva): her OWN plugin installed, chrome-sales — which every
     Salesforce/Drive tool she calls comes from — not installed, and only prose said so."""
     from orchestrator.agent_doctor import check_required_plugins
     repo = _agent_repo(tmp_path, slug="eva", email="eva@dimagi-ai.com", agent_json_extra={
@@ -773,11 +773,11 @@ def test_heal_agent_noop_when_all_green(tmp_path):
 # --------------------------------------------------------------------------------------
 # check_auth_client — the mailbox is authed, but under which OAuth client?
 #
-# The state that took echo down on 2026-08-10 and that NOTHING in the shared doctor saw:
-# the cloud box had a live echo@ token under the legacy `echo` client while the repo pinned
-# `canopy`. `granted_services` looks up (account, client) as a pair, so the mismatch read as
-# "account not found" -> None -> check_auth_services returned OK/"skipped". The one check
-# that could have named the problem went green on it.
+# A state that NOTHING in the shared doctor would otherwise see:
+# the cloud box has a live echo@ token under the `echo` client while the repo pinned
+# `canopy`. `granted_services` looks up (account, client) as a pair, so a mismatch reads as
+# "account not found" -> None -> check_auth_services would return OK/"skipped". The one check
+# that could name the problem must not go green on it.
 # --------------------------------------------------------------------------------------
 
 def _accounts_runner(accounts, *, returncode=0):
@@ -904,7 +904,7 @@ def test_auth_client_offers_both_directions_not_just_a_relogin():
     """Which side is stale is not knowable from here: the box may have missed the client
     migration, or the checkout may predate a pin that already moved. A one-way "go re-login"
     is wrong half the time, and wrong costs a browser round-trip and a scope-REPLACING grant.
-    Both ace and echo flagged here on 2026-08-11 for the checkout reason, not the box one."""
+    So the detail offers both directions."""
     from orchestrator.agent_doctor import check_auth_client
     from orchestrator.agent_email import EmailIdentity
     ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="echo")
@@ -917,12 +917,12 @@ def test_auth_client_offers_both_directions_not_just_a_relogin():
 
 
 # --------------------------------------------------------------------------------------
-# canopy#489 — the doctor's half of the same blind spot.
+# The doctor's half of the same blind spot.
 #
 # `gog auth list` collapses to one row per ACCOUNT, so a mailbox holding tokens under two
-# clients showed only one. Both checks below then spoke confidently about a box they could
-# only half see: the client check demanded a browser re-login that was already done, and the
-# services check scored a grant set that wasn't the one in use.
+# clients shows only one. Without the token store, both checks below would speak confidently
+# about a box they can only half see: the client check would demand a browser re-login that
+# was already done, and the services check would score a grant set that isn't the one in use.
 # --------------------------------------------------------------------------------------
 
 def _accounts_and_tokens_runner(accounts, token_keys, *, returncode=0):
@@ -937,9 +937,9 @@ def _accounts_and_tokens_runner(accounts, token_keys, *, returncode=0):
 
 
 def test_auth_client_passes_when_only_the_token_store_proves_the_pin():
-    """echo, this machine, 2026-08-17: repo pins `canopy`, `token:canopy:echo@` exists, and
-    the account listing shows only `echo`. The check used to report "this box and this
-    checkout disagree" and prescribe a scope-replacing browser re-login that was not needed."""
+    """Repo pins `canopy`, `token:canopy:echo@` exists, and the account listing shows
+    only `echo`. The check must not report "this box and this checkout disagree" and
+    prescribe a scope-replacing browser re-login that is not needed."""
     from orchestrator.agent_doctor import check_auth_client
     from orchestrator.agent_email import EmailIdentity
     ident = EmailIdentity(slug="echo", account="echo@dimagi-ai.com", client="canopy")

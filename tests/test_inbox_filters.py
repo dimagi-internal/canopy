@@ -190,8 +190,8 @@ def test_noreply_filter_spares_alarms_doc_comments_and_other_rows_senders():
 
 
 def test_ses_event_receipts_are_junk_but_alarms_are_not():
-    """SES receipts share no-reply@sns.amazonaws.com with CloudWatch alarms (14 caller
-    sessions on one ace@ thread, 2026-09-23/24). Pinned to the receipts' fixed subject so an
+    """SES receipts share no-reply@sns.amazonaws.com with CloudWatch alarms (unfiltered,
+    they wake many caller sessions on one ace@ thread). Pinned to the receipts' fixed subject so an
     ALARM:/OK: from the same sender still wakes an agent."""
     q = _flt("ignored/no-reply-sender#2")["query"]
     assert q == 'from:no-reply@sns.amazonaws.com subject:"Amazon SES Email Event Notification"'

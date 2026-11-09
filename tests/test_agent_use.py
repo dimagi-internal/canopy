@@ -1,5 +1,5 @@
-"""`canopy agent use <slug>` — use an agent yourself in Claude Code, no runner needed
-(Jonathan, 2026-10-21). Every step is faked through `agent_use.Deps`; each branch says
+"""`canopy agent use <slug>` — use an agent yourself in Claude Code, no runner needed.
+Every step is faked through `agent_use.Deps`; each branch says
 ok / done / NEEDS YOU with the exact URL, command or person."""
 from __future__ import annotations
 
@@ -220,8 +220,8 @@ def test_a_pending_device_key_points_at_its_approve_url(w, tmp_path):
 
 
 def test_an_active_key_with_no_ecdh_key_enrolls_again_to_add_one(w, tmp_path):
-    # A Windows TPM that would not make an ECDH key enrolled without one (DIM-SI-W021,
-    # 2026-10-26): approved, but no vault key could ever be wrapped to it.
+    # A Windows TPM that would not make an ECDH key must not stay enrolled without one:
+    # approved, but no vault key could ever be wrapped to it.
     del w.device["ecdh_jkt"]
     d = w.deps()
     d.enroll_device = lambda rid: (w.enrolled.append(rid) or
@@ -420,9 +420,9 @@ def test_a_sync_failure_needs_you_with_the_refresh_line(w, tmp_path):
 
 
 def test_the_real_env_sync_calls_cred_cli_unthrottled(monkeypatch):
-    """Every other test fakes `sync_env`, so the real wiring went unexercised: #1116
-    removed `cred_cli._sync_from_canopy_web` and every `agent use` failed its env step
-    with an AttributeError dressed as "could not sync from canopy vault"."""
+    """Every other test fakes `sync_env`, so the real wiring would go unexercised: a
+    renamed `cred_cli` helper would make every `agent use` fail its env step with an
+    AttributeError dressed as "could not sync from canopy vault"."""
     from orchestrator import cred_cli
     calls = []
     monkeypatch.setattr(cred_cli, "sync_env",
@@ -481,9 +481,9 @@ def test_nothing_delegated_adds_no_step(w, tmp_path):
     assert "GitHub" not in [s.name for s in _run(w, tmp_path).steps]
 
 
-# ── google login (2026-10-28, failure investigation 17, turn c10c9748) ─────────
-# `canopy agent use` had no Google step: a licensee's first ace turn died on gog's missing
-# OAuth client file, and the fix it printed was an admin's `canopy agent bootstrap`.
+# ── google login ───────────────────────────────────────────────────────────────
+# `canopy agent use` has a Google step: without it a licensee's first ace turn dies on
+# gog's missing OAuth client file.
 
 def test_an_admin_whose_google_login_is_in_place_is_ok(w, tmp_path):
     w.access.update(may_resolve=True, via="admin")

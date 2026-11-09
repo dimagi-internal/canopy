@@ -1,6 +1,6 @@
 """A project's Drive folder is a property of the project.
 
-2026-10-08: a connect-labs session told to "write to Hal's project folder" found P1 with
+The failure this guards: a connect-labs session told to "write to Hal's project folder" found P1 with
 drive_folder_id='' and P4 with an empty folder, asked the human which was meant, then ran
 `canopy gdoc publish` outside an agent repo and got an AgentEmailError traceback. These pin
 the three walls it hit: the folder is linked onto the project, `--project` resolves through
@@ -288,7 +288,7 @@ def test_project_folder_all_backfills_only_active_unlinked(board):
 # -- a dry run never writes -------------------------------------------------------------
 
 def test_a_dry_run_of_a_P_ref_never_creates_a_folder_named_after_it():
-    """2026-10-08: `gdoc publish --agent hal --project P3 --dry-run` created `Projects/P3`."""
+    """`gdoc publish --agent hal --project P3 --dry-run` created `Projects/P3`."""
     drive, client = _drive_with_projects(), FakeClient([_p("P3", "Reliability")])
 
     got = resolve_project_destination(_ident(), "P3", client=client, runner=drive, dry_run=True)

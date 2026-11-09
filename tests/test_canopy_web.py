@@ -91,13 +91,13 @@ def test_urllib_transport_builds_request(monkeypatch):
 # --- An agent never borrows the operator's identity ----------------------------
 #
 # `resolve_token` prefers the agent's own PAT; the operator's
-# `~/.claude/canopy/workbench-token` used to be a WARNED fallback. That was not
-# enough: on the owner's machines the file is Jonathan's PAT, so every agent's board
-# drain and dispatch acted as him with his owner rights (canopy#813), and a narrative
-# was posted as him into the wrong workspace (ace#2805). Measured 2026-07-28 from the
-# ace repo: `/api/agents/` returned HIS view — five agents across two workspaces.
+# `~/.claude/canopy/workbench-token` must not be a silent fallback. On the
+# owner's machines the file is the owner's PAT, so every agent's board drain and
+# dispatch would act as the owner with owner rights, and a narrative could be posted
+# as the owner into the wrong workspace. From the ace repo `/api/agents/` would
+# return the owner's view, not the agent's.
 #
-# Now, in an agent's session the fallback is a refusal. A human working in an agent
+# So in an agent's session the fallback is a refusal. A human working in an agent
 # repo opts back in explicitly with CANOPY_ALLOW_OPERATOR_IDENTITY=1 (still warned).
 
 def _agent_repo(tmp_path, slug):
@@ -198,7 +198,7 @@ def test_the_operator_token_copied_into_the_env_is_still_refused(monkeypatch, tm
 
 def test_a_planted_workbench_token_is_never_used_in_agent_context(monkeypatch, tmp_path, capsys,
                                                                   real_identity_readback):
-    """canopy#813's acceptance test: the human's PAT sits in the workbench-token, the
+    """Acceptance test: the human's PAT sits in the workbench-token, the
     agent has its own — every call, through the real CLI client, carries the agent's,
     and the write announces the identity canopy-web confirms."""
     from orchestrator.agent_client import AgentClient
@@ -347,8 +347,8 @@ def test_no_warning_when_the_env_pins_the_identity(monkeypatch, tmp_path, capsys
     assert capsys.readouterr().err == ""
 
 
-# A project turn's or project chat's session is SCOPED to the person who asked
-# (canopy-web#1782): the runner leaves the conversation's caller token where
+# A project turn's or project chat's session is SCOPED to the person who asked:
+# the runner leaves the conversation's caller token where
 # `canopy-web-mcp-headers.js` finds it, and the CLI must act with the same token —
 # never a PAT, which would act as the box's owner. An agent's session is unaffected.
 
@@ -425,7 +425,7 @@ def test_an_agents_session_keeps_acting_as_the_agent(monkeypatch, tmp_path):
 
 def test_a_local_turn_acts_as_the_person_not_the_agents_stored_login(monkeypatch, tmp_path):
     """A license holder's box can hold the agent's login in ~/.<slug>/.env; their local
-    turn must still act as them (the ACE dispatch that went out as ace@, 2026-10-28)."""
+    turn must still act as them (an ACE dispatch must not go out as ace@)."""
     from orchestrator import local_cli
 
     home = tmp_path / "home"

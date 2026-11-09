@@ -151,7 +151,7 @@ def test_build_upload_command_create():
 
 
 def test_build_replace_commands_edits_in_place_via_docs_api():
-    # issue #353: a native-Doc replace must NOT be a drive media overwrite. It's a
+    # A native-Doc replace must NOT be a drive media overwrite. It's a
     # docs write (blank to a sentinel) + docs find-replace (markdown re-insert).
     cmds = build_replace_commands(_ident(), doc_id="DOCID", md_path="/tmp/x.md")
     assert [c[:3] for c in cmds] == [["gog", "docs", "write"],
@@ -262,7 +262,7 @@ def test_publish_create_shares_and_verifies(tmp_path):
     assert res["shared"] == "domain"
     assert res["verified"] is True
     verbs = [c[2] for c in gog.calls]
-    # `export` is the #568 read-back: create is verified for RENDER as well as for share.
+    # `export` is the read-back: create is verified for RENDER as well as for share.
     assert verbs == ["upload", "export", "share", "permissions"]
 
 
@@ -276,7 +276,7 @@ def test_publish_reports_unverified_when_permission_missing(tmp_path):
 
 
 def test_publish_replace_edits_in_place_and_preserves_share(tmp_path):
-    # issue #353: replace keeps the same id/url, never re-shares, and edits in place via
+    # Replace keeps the same id/url, never re-shares, and edits in place via
     # the Docs API (docs write + docs find-replace) — no drive upload/media overwrite.
     md = tmp_path / "d.md"
     md.write_text("body")
@@ -288,7 +288,7 @@ def test_publish_replace_edits_in_place_and_preserves_share(tmp_path):
     assert res["replaced"] is True
     assert res["shared"] == "preserved"
     verbs = [c[2] for c in gog.calls]
-    # in-place edit, no upload, no re-share — then read the body back (issue #451)
+    # in-place edit, no upload, no re-share — then read the body back
     assert verbs == ["write", "find-replace", "export"]
 
 
@@ -303,10 +303,10 @@ def test_publish_replace_with_name_renames(tmp_path):
 
 
 # --------------------------------------------------------------------------------------
-# issue #451 — the replace path must not claim "verified" for a body it never read back.
+# The replace path must not claim "verified" for a body it never read back.
 #
 # The exported-markdown fixtures below are VERBATIM `gog docs export --format md` output
-# captured from real Drive round trips on 2026-08-12, not hand-written approximations.
+# captured from real Drive round trips, not hand-written approximations.
 # --------------------------------------------------------------------------------------
 
 # What a CORRECT render looks like (published through the create/HTML path).
@@ -411,9 +411,9 @@ def test_publish_replace_stays_verified_when_export_fails(tmp_path):
     assert res["degraded"] == []
 
 
-# ---- The export path the verifier writes to (issue #568) ---------------------------------
+# ---- The export path the verifier writes to ---------------------------------
 #
-# The whole round-trip check was dead for months and nothing noticed, because `_FakeGog`
+# The round-trip check is only live if the path is free, and `_FakeGog`
 # writes the export file whatever path it is handed — while the REAL `gog docs export`
 # refuses a path that already exists. These tests assert the contract the fake cannot:
 # the path handed to gog must not exist yet.
@@ -458,20 +458,20 @@ def test_a_failed_export_says_so_on_stderr(tmp_path, capsys):
     assert "nothing checked this body" in capsys.readouterr().err
 
 
-# ---- Hyperlink degradation (issue #568) --------------------------------------------------
+# ---- Hyperlink degradation --------------------------------------------------
 
 LINK_SOURCE = (
     "# Probe\n\n"
     "A [markdown link](https://github.com/dimagi-internal/canopy/issues/451) in a paragraph.\n\n"
     "- A [link in a list item](https://example.com/probe) with trailing text.\n"
 )
-# What the doc exports as when the import kept the links (verified live, 2026-09-16).
+# What the doc exports as when the import kept the links.
 LINK_GOOD_EXPORT = (
     "# **Probe**\n\n"
     "A [markdown link](https://github.com/dimagi-internal/canopy/issues/451) in a paragraph.\n\n"
     "> * A [link in a list item](https://example.com/probe) with trailing text.\n"
 )
-# The #568 failure: anchor text intact, every URL gone. Lists are textbook-clean, which is
+# The failure to catch: anchor text intact, every URL gone. Lists are textbook-clean, which is
 # why none of the list signatures can see it.
 LINK_STRIPPED_EXPORT = (
     "# **Probe**\n\n"
@@ -526,7 +526,7 @@ def test_replace_degradations_no_links_anywhere_is_clean():
 
 
 def test_publish_create_reports_stripped_links(tmp_path):
-    """#568 head-on: the create path returned `verified: true` for a linkless doc."""
+    """Head-on: the create path returned `verified: true` for a linkless doc."""
     md = tmp_path / "d.md"
     md.write_text(LINK_SOURCE)
     gog = _FakeGog(export_md=LINK_STRIPPED_EXPORT)
@@ -685,11 +685,11 @@ def test_resolve_subfolder_requires_root():
 
 
 # --------------------------------------------------------------------------------------
-# Sheets — `canopy gsheet publish` (added 2026-08-13)
+# Sheets — `canopy gsheet publish`
 #
 # WHY: `publish` covered markdown→Doc and nothing covered a SPREADSHEET, so a skill needing
 # a roster/tracker fell through to raw `gog sheets create` — which lands in My Drive root,
-# unshared. That happened for real on 2026-08-12 (a 45-row target roster). These pin the
+# unshared. These pin the
 # filing contract for the tabular path so it can't regress to "wherever gog defaults to".
 # --------------------------------------------------------------------------------------
 

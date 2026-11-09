@@ -1,6 +1,6 @@
 """The fleet zsh-EQUALS deny rail (agent-core/gating-baseline.json `always`).
 
-WHY THIS FILE EXISTS (2026-09-11). Agents' Bash tool runs under zsh, and zsh's EQUALS option
+WHY THIS FILE EXISTS. Agents' Bash tool runs under zsh, and zsh's EQUALS option
 (on by default) replaces any word that starts with an unquoted `=` with the path of the
 command named by the rest of the word (`=ls` -> `/bin/ls`). A separator like `echo =====`
 therefore asks zsh for a command called `====`, which does not exist:
@@ -8,8 +8,8 @@ therefore asks zsh for a command called `====`, which does not exist:
     (eval):1: ==== not found
 
 That is not a failed echo. It aborts the whole command line: the statements before it have
-printed, the ones after it never run, and the call returns `Exit code 1`. Over the 7 days to
-2026-09-11 (27k Bash calls) there were 41 of these tool results in 15 sessions of ace, eva,
+printed, the ones after it never run, and the call returns `Exit code 1`. Over a measured
+7 days (27k Bash calls) there were 41 of these tool results in 15 sessions of ace, eva,
 ada and hal. It also misleads diagnosis: `canopy agent-review hal` blamed "head/tail pipes
 report exit 1" for the same failure, when the pipes were innocent and `echo ===` was the
 statement that died.
@@ -56,7 +56,7 @@ def test_the_rail_exists():
 
 
 # --------------------------------------------------------------------------------------
-# BLOCKED — a bare `=` word in echo/printf, in the shapes the 2026-09-11 corpus produced
+# BLOCKED — a bare `=` word in echo/printf, in the shapes a real corpus produced
 # --------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("cmd", [
@@ -121,7 +121,7 @@ def test_the_message_names_the_remedy_and_the_cause():
     # echo only as a substring of another word
     "myecho ===",
     "echoes ===",
-    # legitimate commands a broader pattern fired on in the 2026-09-11 corpus
+    # legitimate commands a broader pattern fired on in a real corpus
     "echo '=== ACE'\\''s claims about solicitations being PUBLIC ==='",
     "echo \"cards=$(grep -c \"nScope === 'programme'\" $F) scroll=$(grep -c 'scroll' $F)\"",
     'canopy agent dispatch --slug ada --title "canopy: rail for zsh EQUALS expansion (echo ===)"',

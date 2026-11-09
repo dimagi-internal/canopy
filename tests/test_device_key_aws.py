@@ -1,4 +1,4 @@
-"""An EC2 cloud runner's aws-iam device proof (canopy-web#1549): the SigV4-signed, unsent
+"""An EC2 cloud runner's aws-iam device proof: the SigV4-signed, unsent
 STS GetCallerIdentity in X-Canopy-Aws-Proof, the instance-role credentials from IMDSv2,
 enrollment with {runner, kind, role_arn, proof}, and the resolve attaching the proof.
 
@@ -54,7 +54,7 @@ def test_proof_header_shape_binds_htu_and_iat():
 def test_two_proofs_in_the_same_second_differ():
     # canopy-web keeps each proof's signature single-use; `resolve` and
     # `resolve?refs=` share an htu, so without a nonce two resolves in one second
-    # made one proof and the second was refused as a replay (cloud-ec2-2, 2026-10-17).
+    # made one proof and the second was refused as a replay.
     a = json.loads(base64.b64decode(aws.proof(CREDS, HTU, now=1792181563.1)))["headers"]
     b = json.loads(base64.b64decode(aws.proof(CREDS, HTU, now=1792181563.9)))["headers"]
     assert a["X-Canopy-Proof-Jti"] != b["X-Canopy-Proof-Jti"]
@@ -158,7 +158,7 @@ def test_an_ec2_box_enrolls_its_role(on_ec2, monkeypatch):
     assert (method, path) == ("POST", "/api/runner-device-keys/")
     assert set(body) == {"runner", "kind", "role_arn", "label", "proof", "ecdh_public_jwk"}
     assert body["kind"] == "aws-iam" and body["role_arn"] == ROLE and body["runner"] == "r-ec2"
-    # aws-iam has no key of its own: its ECDH key (canopy-web#1550) is a 0600 software PEM
+    # aws-iam has no key of its own: its ECDH key is a 0600 software PEM
     assert dk.ecdh_pem_path().stat().st_mode & 0o777 == 0o600
     assert body["ecdh_public_jwk"] == dk.load_ecdh().public_jwk
     assert dk.read_status()["ecdh_kind"] == "software"

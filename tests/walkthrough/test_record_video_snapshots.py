@@ -1,4 +1,4 @@
-"""Unit tests for per-scene snapshots (PR #105 gap 1).
+"""Unit tests for per-scene snapshots.
 
 ``record_video.py``'s ``--snapshots <dir>`` flag — and the underlying
 ``Recorder.take_snapshot`` hook + ``Recorder.run_scene`` wiring — is exercised
@@ -243,7 +243,7 @@ def test_snapshot_skipped_when_no_scene_index_available(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Visual capture (canopy#525) — the recording is never at risk over a lens input
+# Visual capture — the recording is never at risk over a lens input
 # ---------------------------------------------------------------------------
 
 

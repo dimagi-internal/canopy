@@ -1,10 +1,10 @@
-"""Provenance beyond `canopy_web.call` (#768): the canopy-web MCP headersHelper and the
+"""Provenance beyond `canopy_web.call`: the canopy-web MCP headersHelper and the
 uploaders that build their own requests.
 
-#768 put the headers on the CLI's shared client. These are the other routes to
+The headers are on the CLI's shared client. These are the other routes to
 canopy-web a session uses — the MCP server (remote, but canopy owns its
 `headersHelper`) is the one an agent calls most, so without it a dispatch through
-`enqueue_turn` still arrived anonymous.
+`enqueue_turn` would arrive anonymous.
 """
 import json
 import os
@@ -47,7 +47,7 @@ def test_the_mcp_helper_sends_the_laptop_parent_beside_the_bearer(tmp_path):
 
 
 def test_the_mcp_helper_finds_the_record_from_emdash_task_name(tmp_path):
-    """canopy#994, measured in a real `claude -p`: Claude Code runs the helper from the
+    """Measured in a real `claude -p`: Claude Code runs the helper from the
     PLUGIN dir, so the worktree cwd never matches; EMDASH_TASK_NAME does arrive."""
     home = tmp_path / "home"
     d = home / ".canopy" / "caller" / "by-task"

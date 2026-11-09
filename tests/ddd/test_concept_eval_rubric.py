@@ -1,9 +1,8 @@
-"""ddd-concept-eval's prose must never disagree with its rubric again (canopy#491).
+"""ddd-concept-eval's prose must never disagree with its rubric.
 
-The shipped ``rubric.yaml`` declared SEVEN weighted dimensions while ``SKILL.md``
-said "six" and listed a weight vector that matched neither file. Three consecutive
-ACE runs (``spark-facilitator/20260813-2126`` iterations 2-4) judged six
-dimensions and recorded the wrong weights. Nothing failed; nothing warned; the
+The failure these guard: ``rubric.yaml`` declares SEVEN weighted dimensions while
+``SKILL.md`` says "six" and lists a weight vector that matches neither file. Judges
+then run six dimensions and record the wrong weights. Nothing fails; nothing warns; the
 verdicts read as complete. The omitted dimension — ``use_case_soundness`` — is the
 one whose findings are always ``route=CONCEPT, fix_kind=redesign``, so the loop
 under-detected precisely the class it most needed to catch.
@@ -39,7 +38,7 @@ class TestRubricIsHealthy:
         assert check(rubric) == [], check(rubric)
 
     def test_use_case_soundness_is_declared(self, rubric) -> None:
-        """The dimension whose absence caused canopy#491."""
+        """The dimension whose absence silently weakens the loop."""
         assert "use_case_soundness" in rubric.ids
 
     def test_exactly_one_advisory_dimension(self, rubric) -> None:

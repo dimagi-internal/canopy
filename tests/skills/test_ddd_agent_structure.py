@@ -377,7 +377,7 @@ def test_agent_reads_ddd_context() -> None:
 
 
 def test_agent_reads_prior_run_summaries_not_learnings() -> None:
-    """learnings.md is retired (2026-10-16): the bootstrap reads earlier runs'
+    """learnings.md is not used: the bootstrap reads earlier runs'
     summaries from canopy-web, and nothing tells the agent to read, append to or
     commit a learnings file."""
     content = AGENT_FILE.read_text()

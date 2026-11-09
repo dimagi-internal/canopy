@@ -2,9 +2,8 @@
 
 A `P<N>` is unique per creating agent, not across an agent's board: its own P5 and a
 P5 another agent made that it works on are listed side by side, and canopy-web reads a
-bare "P5" as the agent's own. 2026-11-06: `canopy agent set --project "Canopy support"`
-turned the name into "P5" and filed hal's task into its own ARCHIVED P5, Supply, with
-no error.
+bare "P5" as the agent's own. Turning the name "Canopy support" into "P5" would file
+hal's task into its own ARCHIVED P5, Supply, with no error.
 """
 import click
 import pytest

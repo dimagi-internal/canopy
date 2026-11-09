@@ -1,4 +1,4 @@
-"""Canopy Vault zero-knowledge v1 (canopy-web#1550): the client library reproduces the
+"""Canopy Vault zero-knowledge v1: the client library reproduces the
 NORMATIVE vectors byte for byte.
 
 `fixtures/vault_zk/zk_v1_vectors.json` is a verbatim copy of canopy-web's

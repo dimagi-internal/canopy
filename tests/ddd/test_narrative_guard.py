@@ -1,4 +1,4 @@
-"""canopy#789 — autonomous narrative review (scripts.ddd.narrative_guard)."""
+"""Autonomous narrative review (scripts.ddd.narrative_guard)."""
 from __future__ import annotations
 
 import json

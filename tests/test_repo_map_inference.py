@@ -113,12 +113,12 @@ class TestResolveRepo:
 
 
 class TestHashedWorktreeCheckoutSegment:
-    """emdash began stamping the checkout hash into worktree paths on 2026-08-28.
+    """emdash stamps the checkout hash into worktree paths.
 
-    `worktrees/ace` became `worktrees/ace-1476c35d`, so the encoded project key
-    gained a segment between the repo short name and `-emdash-`. The original
-    non-greedy capture returned `ace-1476c35d`, which no `owner/repo` ends with,
-    so inference returned None for every worktree created after that date —
+    `worktrees/ace-1476c35d` rather than `worktrees/ace`, so the encoded project key
+    has a segment between the repo short name and `-emdash-`. A non-greedy capture
+    would return `ace-1476c35d`, which no `owner/repo` ends with,
+    so inference would return None for every hashed worktree —
     silently, and only on the fallback path, which is exactly the path that
     exists for sessions the hook never captured.
     """
@@ -149,7 +149,7 @@ class TestHashedWorktreeCheckoutSegment:
         assert result == "jjackson/canopy-web"
 
     def test_unhashed_worktree_still_resolves(self):
-        # The pre-2026-08-28 layout must keep working unchanged.
+        # The unhashed layout must keep working unchanged.
         repo_map = {"-Users-jon-emdash-worktrees-ace-emdash-current": "jjackson/ace"}
         result = infer_repo_from_project_key(
             "-Users-jon-emdash-worktrees-ace-emdash-gone",

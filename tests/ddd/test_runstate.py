@@ -98,7 +98,7 @@ def test_save_load_round_trips(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# learnings.md is retired (2026-10-16): a run's summary travels with the run
+# learnings.md is retired: a run's summary travels with the run
 # ---------------------------------------------------------------------------
 
 def test_runstate_no_longer_writes_learnings():
@@ -206,7 +206,7 @@ def test_new_run_with_explicit_ddd_dir(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# canopy#265 item 4 — save() validates before writing (write-back contract)
+# save() validates before writing (write-back contract)
 # ---------------------------------------------------------------------------
 
 def test_save_rejects_invalid_state(tmp_path, monkeypatch):
@@ -215,7 +215,7 @@ def test_save_rejects_invalid_state(tmp_path, monkeypatch):
     Pydantic v2 does not validate on assignment, so orchestrator code can set
     e.g. state.phase to a value outside the Literal and save() would happily
     persist a run_state.yaml that the next load() rejects — status lies and
-    resume breaks (ACE learned this via dimagi-internal/ace#572)."""
+    resume breaks."""
     _patch_ddd_dir(monkeypatch, tmp_path)
 
     from pydantic import ValidationError
@@ -423,12 +423,12 @@ def test_a_phase0_only_legacy_run_moves_to_the_external_root(tmp_path, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# canopy#627 — the runs root is keyed on the MAIN repo, not the worktree.
+# The runs root is keyed on the MAIN repo, not the worktree.
 #
 # _enclosing_repo stops at the first path carrying a `.git`, which in a
 # `git worktree add` checkout is the WORKTREE root. Keying the runs root on its
-# basename gave every worktree a private, empty runs dir — and since the
-# harness hands agents temp-named worktrees, score_history silently restarted
+# basename would give every worktree a private, empty runs dir — and since the
+# harness hands agents temp-named worktrees, score_history would silently restart
 # at zero on each one. compute_auto_iterate reads that series to decide
 # stall/plateau/convergence, so an empty one changes the loop's terminal
 # verdict, not merely its bookkeeping.

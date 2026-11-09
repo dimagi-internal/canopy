@@ -126,7 +126,7 @@ def test_client_is_taken_from_token_not_agent_json(tmp_path):
     assert cfg["account_clients"]["ace@dimagi-ai.com"] == "canopy-web"
     assert b.verified == [("ace@dimagi-ai.com", "canopy-web")]
     # ...and a `canopy-web` token serves a `canopy` declaration: one app, two sign-in routes
-    # (FLEET_CLIENTS). This was a MISMATCH failure until 2026-10-04, which failed every
+    # (FLEET_CLIENTS). It must not be a MISMATCH failure: that would fail every
     # mailbox signed in through canopy-web's "Connect Google" button.
     assert rep.turn == "OK (canopy-web; declared canopy)"
     assert not any("TURN-CLIENT MISMATCH" in n for n in rep.notes)
@@ -134,7 +134,7 @@ def test_client_is_taken_from_token_not_agent_json(tmp_path):
 
 def test_a_non_fleet_turn_client_mismatch_is_still_loud(tmp_path):
     # A token under a non-fleet client (a legacy per-agent app) does NOT serve a fleet
-    # declaration — that is the 2026-09-08 shape, and it must stay a failure.
+    # declaration — that is a mismatch, and it must stay a failure.
     repo = _repo(tmp_path, gog_client="canopy")
     runner = FakeRunner()
     b = _boot(tmp_path, runner, web={"ace": _tok(client="ace")}, installed=("ace",))
@@ -353,7 +353,7 @@ def test_a_non_fleet_client_token_is_told_to_re_mint(tmp_path):
 
 
 def test_client_file_is_written_to_gogs_data_dir_under_gog_home(tmp_path, monkeypatch):
-    # cloud-ec2-2, 2026-10-26: a per-agent $GOG_HOME reads <home>/data/credentials-*.json,
+    # A per-agent $GOG_HOME reads <home>/data/credentials-*.json,
     # and a box-wide XDG copy must not count as this home's.
     import sys as _sys
     monkeypatch.setattr(_sys, "platform", "linux")      # the cloud box: XDG dirs in play
@@ -370,9 +370,8 @@ def test_client_file_is_written_to_gogs_data_dir_under_gog_home(tmp_path, monkey
 
 
 def test_a_legacy_home_copy_does_not_count_and_the_data_copy_is_written(tmp_path, monkeypatch):
-    # cloud-ec2-2, 2026-10-26: ace and ada kept the <home>/credentials-canopy.json an earlier
-    # bootstrap wrote; it satisfied the check, the data copy gog reads was never written, and
-    # their mail stayed dead while eva (no legacy copy) worked.
+    # A <home>/credentials-canopy.json written by an earlier bootstrap must not satisfy the
+    # check: the data copy gog reads would never be written, and mail would stay dead.
     import sys as _sys
     monkeypatch.setattr(_sys, "platform", "linux")
     home = tmp_path / "gog"
@@ -400,8 +399,8 @@ def test_client_creds_in_gogs_data_dir_count_as_present(tmp_path):
 # ── a canopy-hosted mailbox has no gog token ────────────────────────────────
 
 def test_a_hosted_mailbox_asks_nobody_for_a_gog_token(tmp_path):
-    """bailey, 2026-10-25: its own turn's bootstrap asked canopy-web for `gog-token`, which a
-    hosted agent never declares — an owner alert — and then failed it for having none."""
+    """A hosted agent's own turn bootstrap must not ask canopy-web for `gog-token`, which a
+    hosted agent never declares (an owner alert), nor fail it for having none."""
     from orchestrator.agent_email import EmailIdentity
     repo = _repo(tmp_path)
     runner = FakeRunner()
@@ -416,8 +415,8 @@ def test_a_hosted_mailbox_asks_nobody_for_a_gog_token(tmp_path):
 
 
 # ── google_login: the Google half `canopy agent use` / `agent google-login` share ──
-# 2026-10-28, failure investigation 17, turn c10c9748: `canopy agent use` had no Google
-# step, so a licensee's first ace turn died on a missing credentials-canopy.json.
+# `canopy agent use` runs a Google step, so a licensee's first ace turn does not die on a
+# missing credentials-canopy.json.
 
 def test_google_login_alone_writes_the_client_imports_and_maps(tmp_path):
     repo = _repo(tmp_path)

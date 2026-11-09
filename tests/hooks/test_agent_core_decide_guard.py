@@ -1,8 +1,8 @@
 """The fleet's decide-don't-offer rail: a native prompt Stop hook rendered from labelled
 examples (`src/orchestrator/decide_guard_prompt.py`).
 
-The regex engine this replaced was whack-a-mole (2026-10-04: three misses in one ada
-session). Its parametrized closings now live as labelled examples in
+A regex engine would be whack-a-mole (closings keep finding new phrasings), so the rail is
+a prompt. The parametrized closings live as labelled examples in
 `plugins/canopy/agent-core/decide_guard_examples.jsonl`; what is tested here is the
 plumbing that keeps the hook honest — the render agrees with the scope switch, the prompt
 keeps the rules the live probe showed it needs, the stamp REPLACES the regex loader rather
@@ -42,7 +42,7 @@ def test_plugin_hooks_json_follows_the_scope_switch():
 def test_the_hook_entry_uses_a_full_model_id():
     (hook,) = dg.hook_entry(dg.render_prompt(dg.load_examples()))["hooks"]
     assert hook["type"] == "prompt"
-    # Probed 2026-10-04: an alias ("haiku") is rejected as unrecognized_model.
+    # An alias ("haiku") is rejected as unrecognized_model.
     assert hook["model"].startswith("claude-") and hook["model"].count("-") >= 2
     assert hook["timeout"] == dg.TIMEOUT_S
 
@@ -188,7 +188,7 @@ def test_an_agent_repo_cannot_carry_it(tmp_path):
 def test_unstamp_retires_an_agent_copy_and_keeps_every_other_hook(tmp_path):
     repo = _agent_repo(tmp_path)
     settings = repo / ".claude" / "settings.json"
-    dg.stamp_settings(settings)  # the 2026-10-08..13 state: prompt hook in the agent repo
+    dg.stamp_settings(settings)  # the prior state: prompt hook in the agent repo
     assert CliRunner().invoke(decide_guard_group,
                               ["unstamp", "--agent-repo", str(repo), "--check"]).exit_code != 0
     ok = CliRunner().invoke(decide_guard_group, ["unstamp", "--agent-repo", str(repo)])
@@ -212,7 +212,7 @@ def test_unstamp_drops_an_emptied_stop_list(tmp_path):
 
 
 def test_production_deploy_asks_are_fine():
-    """Fleet authority: deploys of other systems are not pre-approved (Jonathan, 2026-10-04)."""
+    """Fleet authority: deploys of other systems are not pre-approved."""
     (row,) = [r for r in dg.load_examples() if "production deploy" in r["closing"]]
     assert row["handback"] is False
 
@@ -231,8 +231,8 @@ def test_the_retired_regex_engine_is_a_silent_no_op():
 
 
 def test_the_prompt_stays_short_and_the_rest_is_held_out():
-    """Jonathan, 2026-10-04: the 12K-char first version was "way way too much text" for a
-    prompt sent on every Stop. Only `in_prompt` examples are rendered; the budget is enforced."""
+    """A 12K-char prompt is far too much text to send on every Stop. Only `in_prompt`
+    examples are rendered; the budget is enforced."""
     rows = dg.load_examples()
     prompt = dg.render_prompt(rows)
     assert len(prompt) <= dg.PROMPT_BUDGET
@@ -244,7 +244,7 @@ def test_the_prompt_stays_short_and_the_rest_is_held_out():
 
 
 def test_the_plugin_carries_no_decide_guard():
-    """Opt-in since 2026-10-08: the plugin must not impose one person's Stop rail on every
+    """Opt-in: the plugin must not impose one person's Stop rail on every
     canopy user. Agents stamp it into their own settings; a person stamps it with --user."""
     assert dg.PLUGIN_WIDE is False
     hooks = json.loads(dg.HOOKS_JSON_PATH.read_text(encoding="utf-8"))

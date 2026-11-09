@@ -1,4 +1,4 @@
-"""Preflight has to be able to sign in — canopy#532.
+"""Preflight has to be able to sign in.
 
 `recipe_preflight` exists to save a render by catching unresolvable targets
 cheaply. For a session-authenticated spec it did the opposite: with no way to be
@@ -270,7 +270,7 @@ def test_a_session_auth_spec_with_no_session_reports_everything_unresolved(
 def test_a_session_auth_spec_whose_targets_resolve_now_passes(
     tmp_path, gated_server, chromium_available
 ):
-    """canopy#532: the same recipe, handed the session the recorder gets."""
+    """The same recipe, handed the session the recorder gets."""
     spec = _spec(tmp_path, gated_server, "testid:step-trail", "good")
     state = _storage_state(tmp_path, gated_server)
 
@@ -287,7 +287,7 @@ def test_an_authenticated_walk_still_fails_a_genuinely_broken_selector(
     """The non-vacuity control — the half that proves the check still works.
 
     Same session, same page, a selector that is not on it. If this passes,
-    #532's fix disabled preflight for session-auth specs instead of repairing
+    the fix disabled preflight for session-auth specs instead of repairing
     it, and a real recipe defect would be as invisible as the false one was
     unmissable.
     """

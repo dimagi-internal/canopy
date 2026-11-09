@@ -1,5 +1,5 @@
 """The canopy-web MCP headers helper: a colleague's FULL-profile session sends the
-asker's caller token, never the box's PAT (canopy-web#1332). Runs the real script under node."""
+asker's caller token, never the box's PAT. Runs the real script under node."""
 import json
 import os
 import subprocess

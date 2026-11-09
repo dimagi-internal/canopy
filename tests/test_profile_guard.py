@@ -240,7 +240,7 @@ def test_the_sessions_own_envelope_is_readable_and_nothing_beside_it(monkeypatch
 
 # --- writes have their own list ------------------------------------------------------
 #
-# 2026-09-26: Write was checked against read_paths, so a caller who could read
+# Write must not be checked against read_paths, or a caller who could read
 # the worktree could overwrite bin/ace-email — the script their bash allowlist
 # runs — and then run it.
 
@@ -274,7 +274,7 @@ def test_no_write_paths_means_no_writes(monkeypatch, capsys, profiles):
 
 # --- the session's own tool output -----------------------------------------------------
 #
-# 2026-09-29, hal cx-canopy-agent-dask: `canopy email read` on a 15-message thread
+# A hal agent's `canopy email read` on a 15-message thread
 # printed 90 KB. Claude Code saved it to <project>/<session>/tool-results/ and showed
 # the first 2 KB, the guard refused the file, and the caller's newest message (the
 # last one) was never read. Two turns stalled that way.
@@ -388,8 +388,8 @@ def test_a_wildcard_slot_cannot_hold_a_flag(monkeypatch, capsys, profiles, tmp_p
         assert _run(monkeypatch, capsys, "Bash", {"command": cmd}, cwd=str(w))[0] == 2, subject
 
 
-# The live read-mode allowlists (ACE's; Hal's has the same shape — read
-# 2026-10-06): what their answer-caller skills actually run must keep passing.
+# The live read-mode allowlists (ACE's; Hal's has the same shape): what their
+# answer-caller skills actually run must keep passing.
 LIVE_READ_MODE = {"version": 1, "thread_id": "18c9abc", "turn_id": "t1", "capability": {
     "name": "ask",
     "tools": ["Read", "Grep", "Glob", "Write"],

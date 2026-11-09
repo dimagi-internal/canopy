@@ -1,10 +1,8 @@
-"""The geometry + colour lens — canopy#525.
+"""The geometry + colour lens.
 
-Every case here is one of the three defects that scored PASSING on every
-text-based lens across four iterations of ACE run
-``bednet-check-2-visit/20260825-1310``, or one of the false positives the
-hand-written probe that eventually found them emitted on the same page. The
-measured numbers are the ones actually recorded on that run, so these tests
+Every case here is one of the three defects that score PASSING on every
+text-based lens, or one of the false positives a hand-written probe emits on
+the same page. The numbers are measured values, so these tests
 double as the record of what the lens is for.
 """
 from __future__ import annotations
@@ -357,7 +355,7 @@ def test_js_hook_classes_are_not_reported_as_missing_utilities():
 
 
 def test_the_text_lenses_are_structurally_blind_to_all_three_defects():
-    """The load-bearing claim of canopy#525: `data_fidelity` scored 9/9 and
+    """The load-bearing claim: `data_fidelity` scored 9/9 and
     `narrated_numbers` 9/9 on the very page carrying these defects. Assert
     that directly, so it is a measured fact rather than a story in a docstring
     — and so a future change that makes a text lens catch one of these is

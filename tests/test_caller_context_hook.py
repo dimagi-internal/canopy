@@ -190,7 +190,7 @@ def test_no_page_says_nothing_about_one(tmp_path):
 
 
 # A chat held on a site's page reaches the site only as the person who sent — owners
-# included (canopy-web, 2026-10-26). The envelope's `site` block says so.
+# included. The envelope's `site` block says so.
 
 SITE = {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN"],
         "reach_with": ["site_tools", "site_call", "site_read"], "as": "the person who sent",
@@ -208,7 +208,7 @@ def test_no_site_says_nothing_about_one(tmp_path):
     assert "withheld from this turn" not in cc.summarize({**ENV, "site": None}, str(tmp_path / "e"), TID)
 
 
-# --- manual mode and code shipping (owner decision, 2026-10-08) -----------------------
+# --- manual mode and code shipping (owner decision) -----------------------
 # Manual mode gates what reaches people or other systems. On the agent's OWN turns
 # (owner / admin / system, verified) it does not gate push / PR / merge — the agent's
 # GitHub credentials already bound which repos it can touch. Anyone else's say-so still
@@ -244,7 +244,7 @@ def test_an_auto_turn_adds_no_note(tmp_path):
     assert _mode_line(text) == "- turn mode: auto"
 
 
-# --- envelope VERSION 2 words (canopy-web, 2026-10-04) -------------------------------
+# --- envelope VERSION 2 words -------------------------------
 
 @pytest.mark.parametrize("rel, prof", [("contact", "confined"), ("caller", "restricted")])
 def test_both_envelope_versions_render_todays_words(tmp_path, rel, prof):
@@ -342,7 +342,7 @@ def test_a_person_gets_no_agent_trigger_line(tmp_path):
     assert "agent trigger" not in cc.summarize(ENV, str(tmp_path / "e.json"), TID)
 
 
-# --- unproven_member (canopy-web#1265) ------------------------------------------------
+# --- unproven_member ------------------------------------------------
 
 UNPROVEN = {"email": "member@example.org", "role": "editor",
             "this_message_grade": "contact", "needs": ["dmarc", "dkim_aligned"],
@@ -366,9 +366,9 @@ def test_no_unproven_member_says_nothing_about_one(tmp_path, bad):
         assert "unproven member" not in cc.summarize(env, str(tmp_path / "e.json"), TID)
 
 
-# --- person (envelope v3, canopy#804: the fleet brain) ----------------------------------
+# --- person (envelope v3: the fleet brain) ----------------------------------
 
-#: The exact v2 render, captured from the hook BEFORE the person block existed. A v2
+#: The exact v2 render, captured from the hook with no person block. A v2
 #: envelope (or a v3 one with no person) must still print exactly this — the block is
 #: additive, and every turn's prompt pays for any drift.
 V2_ENV = {"version": 2, "turn_id": "t-9", "relationship": "contact", "verified": False,
@@ -575,7 +575,7 @@ def test_available_but_off_in_this_session_says_so():
 
 
 def test_on_but_not_granted_to_this_agent_says_canopy_asks_not_the_agent():
-    # canopy-web #1389: grants are per agent, by the person, in the session's UI.
+    # Grants are per agent, by the person, in the session's UI.
     avail = {"record": True, "use": True}
     lines = cc.person_lines({**PERSON, "hcp": {"record": False, "use": False, "available": avail,
                                                "session": True, "agent": "ada",
@@ -610,7 +610,7 @@ def test_both_on_or_no_marker_reads_as_before():
     assert on == absent and "`hcp_addPreference`" in on[-1]
 
 
-# --- MCP Apps: what a site's View recorded (canopy-web spec 2026-10-08) -----------------
+# --- MCP Apps: what a site's View recorded -----------------
 
 
 def test_view_receipts_and_context_are_in_context(tmp_path):
@@ -637,8 +637,8 @@ def test_a_view_line_cannot_forge_a_canopy_line(tmp_path):
 
 
 # --- where in Slack the conversation is (canopy-web conversation.slack) --------------
-# A Slack turn asked to "post a new clean thread in the channel" had to ask which
-# channel it was in (2026-10-16): the envelope now names it, and this line puts it
+# A Slack turn asked to "post a new clean thread in the channel" must not have to ask which
+# channel it is in: the envelope names it, and this line puts it
 # beside the prompt with the one call that moves the conversation.
 
 SLACK = {"team_id": "T1", "channel_id": "C0123", "channel_name": "dev",
@@ -659,8 +659,8 @@ def test_a_slack_conversation_names_its_channel_and_thread(tmp_path):
 
 
 def test_a_slack_turn_is_told_its_reply_is_the_post(tmp_path):
-    # 2026-10-25: an ACE Slack turn asked "want me to post this to the thread?" about
-    # a reply canopy-web had already relayed there.
+    # A Slack turn must not ask "want me to post this to the thread?" about
+    # a reply canopy-web already relays there.
     env = {**ENV, "conversation": {"slack": SLACK}}
     (line,) = _slack_line(env, tmp_path)
     assert "posts automatically, as you, into this thread, where everyone in #dev (C0123) reads it" in line
@@ -697,8 +697,8 @@ def test_a_channel_name_cannot_forge_a_line(tmp_path):
 
 
 def test_the_agent_is_told_which_parent_to_pass(tmp_path):
-    """canopy#994: the per-turn ids an agent passes as `parent` when it starts canopy
-    work, so the new session takes this conversation's people (canopy-web#1658)."""
+    """The per-turn ids an agent passes as `parent` when it starts canopy
+    work, so the new session takes this conversation's people."""
     env = {**ENV, "conversation": {"session_id": "5a5a5a5a-0000-4000-8000-000000000002"}}
     text = cc.summarize(env, str(tmp_path / "env.json"), TID)
     assert ('parent={"turn": "%s", "session": "5a5a5a5a-0000-4000-8000-000000000002"}' % TID) in text
@@ -746,7 +746,7 @@ def test_a_persons_turn_and_an_older_canopy_web_say_nothing_new(tmp_path):
     assert "on behalf of" not in cc.summarize({**ENV, "who": ADA_ASKS}, str(tmp_path / "e"), TID)
 
 
-# ── presence: the latest message's channel, recorded every prompt (2026-10-27) ──
+# ── presence: the latest message's channel, recorded every prompt ──
 
 SID = "632136fd-ed49-4fb6-bcac-1df69e0c597f"
 

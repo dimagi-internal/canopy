@@ -1,8 +1,8 @@
 """The external_release gate must never silently hang.
 
-Regression for the Nutrition Demo freeze (2026-07-22): "publish it" ran the
-release gate, which posted a review and then polled canopy-web for 24h in
-silence for a UI click that a non-interactive run can never make. These tests
+Regression guard for the freeze where "publish it" ran the release gate, which
+posted a review and then polled canopy-web for 24h in silence for a UI click
+that a non-interactive run can never make. These tests
 lock in that a non-interactive caller HOLDS instead of blocking, and that the
 interactive path is bounded + heartbeated.
 """

@@ -1,7 +1,7 @@
-"""The fleet's inbound-email table (canopy#679): every message lands in exactly one row.
+"""The fleet's inbound-email table: every message lands in exactly one row.
 
 Doc-comment fixtures are synthetic but keep the exact phrasing Google uses (lead line,
-footer), measured on every Doc-comment message in the fleet mailboxes on 2026-09-24:
+footer), as measured across every Doc-comment message in the fleet mailboxes:
 52 messages → 5 wanted, 20 ignored, 27 unclassified (wake).
 """
 import base64

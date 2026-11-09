@@ -188,7 +188,7 @@ def test_project_set_append_link_files_a_deliverable_on_the_project(fake_http):
 
 
 def test_append_link_repeated_adds_every_link_on_project_and_task(fake_http):
-    """2026-10-22: `agent set --append-link A --append-link B` exited 0 and kept only B —
+    """`agent set --append-link A --append-link B` must keep both links, not only B —
     a single-valued click option silently takes the last repeat. Both verbs, every link."""
     calls, responses = fake_http
     _projects(responses, _project())

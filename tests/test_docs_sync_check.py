@@ -272,8 +272,8 @@ class TestTriggerPathsAreReal:
 # -----------------------------------------------------------------------------
 # fetch_pr_context / main — behaviour when the GitHub API cannot be read.
 #
-# canopy #496: during the 2026-08-17 GitHub incident the gate crashed with a
-# CalledProcessError traceback and went red on a PR whose diff was fine. A red
+# If GitHub is unreachable the gate must not crash with a
+# CalledProcessError traceback and go red on a PR whose diff is fine. A red
 # gate reads as "my PR is wrong", so the expensive direction of this error is
 # someone editing a correct diff to satisfy a check that never evaluated it.
 # A gate that cannot look must SKIP loudly, not fail.
@@ -359,8 +359,8 @@ class TestFetchPrContextResilience:
         assert "view" not in files_cmd
         # REST names this field `filename`; the GraphQL call this replaced
         # named it `path`. Asking for `.path` against REST yields a column of
-        # nulls, i.e. a successful call that returns no filenames — caught
-        # live while landing #496, and pinned here so it cannot come back.
+        # nulls, i.e. a successful call that returns no filenames — pinned
+        # here so it cannot come back.
         assert ".[].filename" in files_cmd
         assert ".[].path" not in files_cmd
 
@@ -400,15 +400,14 @@ class TestMainSkipsWhenApiUnreadable:
 class TestChangedFilesSeparators:
     """`--changed-files` must not silently swallow a mis-separated list.
 
-    The gate's help said "newline- or comma-separated", and it split on exactly
+    The gate's help says "newline- or comma-separated", and it splits on exactly
     those. The natural local invocation is to paste `git diff --name-only`
     output, which arrives SPACE-separated through `$(...)` or `tr` — so all the
-    paths became one string containing spaces, matched no trigger path, and the
-    gate printed its own success line having evaluated nothing.
+    paths would become one string containing spaces, match no trigger path, and
+    the gate would print its own success line having evaluated nothing.
 
-    That is the worst failure shape a gate has: a confident false PASS. It
-    happened on canopy#529 (2026-08-26), whose PR body then claimed a docs-sync
-    pass the gate had never given; CI failed on the same commit minutes later.
+    That is the worst failure shape a gate has: a confident false PASS, which lets
+    a PR body claim a docs-sync pass the gate never gave.
     """
 
     def _run(self, capsys, changed, body=""):

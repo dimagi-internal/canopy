@@ -86,13 +86,13 @@ class TestScanAllTranscripts:
         assert result[0]["repo"] == "owner/my-repo"
 
 
-# --- summarize_prompt: the roster must distinguish turns of the SAME agent (canopy#599) ---
+# --- summarize_prompt: the roster must distinguish turns of the SAME agent ---
 
 def test_summarize_prompt_surfaces_the_slash_command_scope():
     """The bug: truncating the raw prompt cuts INSIDE the command preamble, so the
     `<command-args>` — the only part saying what the session works on — is always the
-    part discarded. Six live hal turns on six different items all rendered as
-    `"<command-message>hal:turn</command-message>\\n<comma..."` on 2026-09-04.
+    part discarded. Six hal turns on six different items would all render as
+    `"<command-message>hal:turn</command-message>\\n<comma..."`.
     """
     from orchestrator.scanner import summarize_prompt
 

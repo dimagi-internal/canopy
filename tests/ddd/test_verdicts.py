@@ -1,6 +1,6 @@
-"""Tests for scripts/ddd/verdicts.py — the unified verdict loader (canopy#265 item 1).
+"""Tests for scripts/ddd/verdicts.py — the unified verdict loader.
 
-Six verdict artifacts, three historical structural schemas:
+Six verdict artifacts, three structural schemas:
   * concept/user/actionability/why — the canonical weighted-dimension Verdict YAML
   * verdict-timing.json — render_locally.py's deterministic shape
     ({verdict, overallScore, coverage, findings[]}, camelCase, no dimensions)
@@ -213,7 +213,7 @@ def test_arc_is_gating():
 
 
 # ---------------------------------------------------------------------------
-# discover_extra_verdicts — the ddd-run Step 4 plug (canopy#273 item 1)
+# discover_extra_verdicts — the ddd-run Step 4 plug
 # ---------------------------------------------------------------------------
 
 

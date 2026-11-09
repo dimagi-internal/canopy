@@ -1,11 +1,11 @@
 """closeout improvement: every opted-in incident turn ends with a MERGED PR that fixes the cause
 or makes the next fire easier to diagnose.
 
-Jonathan, 2026-10-29: "anytime an alarm is fired, it should either result in a solution or an
-improvement in how to figure out why we can't find a solution". Ada's review of 24 labs alarm
-incidents since 2026-08-26: ~10 ended "cause unknown, needs someone with AWS SSO", ~8 "improved"
-only Hal's own skill prose (hal#144, #255, #275, #279, #297), and the diagnosability asks sat as
-unowned connect-labs issues (#1575, #1578). Each rejection below is one of those endings.
+The rule: "anytime an alarm is fired, it should either result in a solution or an
+improvement in how to figure out why we can't find a solution". The endings it rejects: "cause
+unknown, needs someone with AWS SSO"; an "improvement" that only edits Hal's own skill prose;
+and diagnosability asks left as unowned connect-labs issues. Each rejection below is one of those
+endings.
 """
 import json
 import shutil
@@ -54,10 +54,10 @@ def verdict(r, run=None):
 
 # ---- the two real records ------------------------------------------------------------------
 
-# canopy-web turn a72a5d39-3ae9-41ec-8aa4-00776b868b28 (cloud-ec2-live, 2026-10-29 10:11-10:12Z),
+# A canopy-web cloud turn (cloud-ec2-live, 10:11-10:12Z),
 # its result_note reduced to facts: "I added one comment to it and opened nothing new ... It still
 # asks someone with AWS SSO to pull per-path response times ... the cause is still undiagnosed.
-# The slow workflow-run page (#2514) is the candidate, unconfirmed ... I only looked at the end
+# The slow workflow-run page is the candidate, unconfirmed ... I only looked at the end
 # of its output ... ✅ Session complete — safe to close."
 TURN_A72A5D39 = {
     "subject": "labs-jj-alb-latency-high",
@@ -110,7 +110,7 @@ def test_replay_connect_labs_2404_an_alarm_description_change_passes():
 
 @pytest.mark.skipif(not shutil.which("gh"), reason="needs gh")
 def test_replay_connect_labs_2404_live_through_the_cli(tmp_path, monkeypatch):
-    """The real gh, the real PR: merged 2026-10-09, one file, infra/labs-tenant-monitoring.yml."""
+    """The real gh, the real PR: merged, one file, infra/labs-tenant-monitoring.yml."""
     if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0:
         pytest.skip("gh not signed in")
     monkeypatch.setattr(co, "ROOT", str(tmp_path))
@@ -173,7 +173,7 @@ def test_a_closed_unmerged_pr_is_rejected():
     assert "is CLOSED, not MERGED" in v.problems[0]
 
 
-@pytest.mark.parametrize("files", [["skills/labs-perf/SKILL.md"],                      # hal#297
+@pytest.mark.parametrize("files", [["skills/labs-perf/SKILL.md"],                      # own skill prose
                                    ["skills/turn/SKILL.md", "CLAUDE.md"],
                                    ["skills/labs-perf/scripts/notes.txt", "docs/alarms.md"]])
 def test_a_pr_that_only_edits_the_agents_own_prose_does_not_count(files):

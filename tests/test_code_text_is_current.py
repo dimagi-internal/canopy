@@ -14,11 +14,13 @@ A release number ("0.2.528"), a compact run id ("20261015-1129"), a year-month (
 number ("canopy-web T76") and "any more" date or narrate a statement the same way.
 
 Scans the comments and docstrings of every .py / .sh / .ts / .js / .yml under `src/`, `plugins/canopy/`,
-`scripts/`, `hooks/`, `packages/canopy_agent_factory/` and `.github/` (test files of the plugin excluded), and the
+`scripts/`, `hooks/`, `packages/canopy_agent_factory/`, `.github/` and `tests/` (test files of the plugin excluded), and the
 `_doc`-style strings of `plugins/canopy/agent-core/gating-baseline.json`. Run
 `python tests/test_code_text_is_current.py` to list the hits.
 
-A date that is DATA (an API version, a run-id format, a typed example value) is not history:
+Only comments and docstrings are read, never a string literal, so a date in a fixture or an expected value
+is not seen. A date that is DATA but sits in a comment or docstring (an API version, a run-id format, a typed
+example value) is not history:
 add it to ALLOW with the reason. The list can only shrink; a stale entry fails the suite.
 """
 from __future__ import annotations
@@ -33,7 +35,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRS = ["src", "plugins/canopy", "scripts", "hooks", "packages/canopy_agent_factory", ".github"]
+DIRS = ["src", "plugins/canopy", "scripts", "hooks", "packages/canopy_agent_factory", ".github", "tests"]
 SKIP = ("node_modules", "/test/", "video-engine", "__pycache__", ".venv")
 JSON_FILES = ["plugins/canopy/agent-core/gating-baseline.json"]
 
@@ -111,6 +113,11 @@ ALLOW = [
         "plugins/canopy/skills/doc-regeneration/scripts/find_history.py",
         r".",
         "the tool that finds history in docs: its patterns and examples are its subject matter",
+    ),
+    (
+        "tests/test_code_text_is_current.py",
+        r".",
+        "its docstring and comments quote the patterns this guard detects, as examples: its subject matter",
     ),
     (
         "plugins/canopy/skills/doc-regeneration/scripts/docs_ignore.py",

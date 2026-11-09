@@ -1,4 +1,4 @@
-"""`canopy cred` — session identity (canopy#850 design revision). canopy-web mocked."""
+"""`canopy cred` — session identity: canopy-web mocked."""
 from __future__ import annotations
 
 import json
@@ -223,7 +223,7 @@ def _env_file(home, slug, mode=0o600, body="SETTING=x\n"):
 
 def test_human_with_a_private_resolved_env_never_asks_canopy_web(web, _isolated):
     """The one-time resolve is enough: an unreachable canopy-web must not refuse the
-    human who already resolved this agent's env here (Jonathan, 2026-10-09)."""
+    human who already resolved this agent's env here."""
     _env_file(_isolated, "ace")
     v = cred_cli.decide("ace")
     assert v.allowed and v.via == "local-env" and web["calls"] == []
@@ -399,7 +399,7 @@ def test_google_token_cli_prints_the_path_never_the_token(google, monkeypatch):
     assert ACCESS not in res.output and res.output.strip().endswith("google-token/eva.json")
 
 
-# ── exec: the agent's env in the CHILD only (canopy#946) ──────────────────────
+# ── exec: the agent's env in the CHILD only ──────────────────────
 
 _CHILD = [sys.executable, "-c",
           "import os,sys; v=os.environ.get('SETTING_A'); "

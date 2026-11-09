@@ -1,5 +1,5 @@
-"""Workspace vaults layered under an agent's own secrets, on the client (canopy-web spec
-2026-10-22-vault-access-follows-canopy-access-design.md §4). Real crypto: a layer's value
+"""Workspace vaults layered under an agent's own secrets, on the client (canopy-web's
+vault-access design). Real crypto: a layer's value
 is read only if this device's own key opens that layer's copy of ITS vault key."""
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_a_workspace_vault_session_targets_its_own_routes():
     assert vault_zk_cli.ZkVault("ace", token="t").base == "/api/agents/ace/vault/zk"
 
 
-# ---- a shut vault says why and who fixes it (ada brief 2026-11-05, DIM-SA-W175) ---------------
+# ---- a shut vault says why and who fixes it ---------------
 
 FIX = ("DIM-SA-W175 is waiting for idiene@dimagi.com to confirm it: canopy-web Settings → Device keys → "
        "DIM-SA-W175 → Confirm access (passkey). Running `canopy vault zk keep` elsewhere will not help.")

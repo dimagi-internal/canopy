@@ -90,8 +90,8 @@ def test_different_work_or_day_derives_a_different_key():
     assert derive_idempotency_key("hal", "Fix the cursor", "2026-07-29") != base
 
 
-# An untitled dispatch is keyed on its WHOLE prompt (2026-10-04: a corrected re-dispatch
-# to ace whose brief opened like the first returned the earlier finished turn).
+# An untitled dispatch is keyed on its WHOLE prompt (a corrected re-dispatch
+# to ace whose brief opened like the first must not return the earlier finished turn).
 _BRIEF = "Fix the failing labs export test. " * 4          # > 80 chars of shared head
 
 
@@ -135,7 +135,7 @@ def test_key_is_filesystem_and_url_safe():
 def test_a_done_turn_is_reported_as_LAUNCHED_not_completed():
     """The launch turn flips to `done` within seconds with result_note 'created
     session ...'. That is the RUNNER finishing, not the agent's work succeeding.
-    Reporting it as a completed outcome is a real, recorded miss (2026-07-23)."""
+    Reporting it as a completed outcome would be a false claim."""
     s = summarize_turn({"id": "t1", "status": "done",
                         "result_note": "created session 'hal-api-abcd-0728-1400'"})
     assert s["state"] == "launched"
@@ -252,7 +252,7 @@ def test_a_claimed_or_running_turn_does_not_report_it_was_never_spawned():
     """`queued`, `claimed` and `running` share the pending bucket — none has finished
     spawning, so none may claim LAUNCHED. But they are not the same claim to a human:
     rendering `running` as "the runner has not spawned it yet" states the exact
-    falsehood `canopy project turns` exists to disprove. dimagi-internal/canopy#433."""
+    falsehood `canopy project turns` exists to disprove."""
     from orchestrator.agent_dispatch import summarize_turn
 
     unclaimed = summarize_turn({"id": "t", "status": "queued"})
@@ -267,7 +267,7 @@ def test_a_claimed_or_running_turn_does_not_report_it_was_never_spawned():
         assert "executing" in s["headline"]
 
 
-# --- #488: a dispatched prompt must SAY it was dispatched ---------------------
+# --- a dispatched prompt must SAY it was dispatched ---------------------
 #
 # The runner hands the prompt to Claude Code as input, so the transcript records it as
 # typed by a human — truthfully, from the harness's point of view. This layer is the only
@@ -412,7 +412,7 @@ def test_pin_refuses_a_runner_that_does_not_serve_the_agent():
 
 def test_pin_to_a_cloud_runner_with_no_agent_list_is_allowed():
     # cloud-ec2-1 really reports kind=cloud and capabilities without "agents";
-    # it runs ada/eva turns by routing (2026-10-05: an ada pin there was refused).
+    # it runs ada/eva turns by routing, so an ada pin there is allowed.
     cloud = {**RUNNERS[2], "kind": "cloud"}
     assert check_runner_pin(cloud, "ada") == ([], [], [])
     declared = {**cloud, "capabilities": {"agents": ["hal"]}}
@@ -689,9 +689,9 @@ def test_cli_surfaces_a_403_for_auto(monkeypatch):
 
 
 # --- a PERSON dispatching from their own Claude Code ------------------------
-# 2026-10-19: a teammate's `canopy agent dispatch --slug ace` from outside any agent repo was
-# stamped "Dispatched by another canopy agent" — false, and the receiving session had to call
-# who_is_asking to find out a human sent it.
+# A teammate's `canopy agent dispatch --slug ace` from outside any agent repo must not be
+# stamped "Dispatched by another canopy agent" — that is false, and the receiving session
+# would have to call who_is_asking to find out a human sent it.
 
 def test_a_person_is_named_as_a_person_not_an_agent():
     p = build_turn_payload("ace", prompt="read-only test", idempotency_key="k5",
@@ -713,7 +713,7 @@ def test_an_agent_sender_outranks_the_person_whose_token_it_uses():
 
 
 def test_cli_dispatch_from_outside_an_agent_repo_names_the_person(monkeypatch):
-    """The 2026-10-19 path end to end: no agent repo underfoot, so the CLI reads /api/me/
+    """The outside-an-agent-repo path end to end: no agent repo underfoot, so the CLI reads /api/me/
     and the receiving agent is told a person sent it, by name."""
     calls = []
     inner = _fake_transport(calls)
@@ -790,8 +790,7 @@ def test_caller_with_no_verified_person_is_refused_before_anything_is_sent(
 
 
 # --- dispatch is for unattended work; local use is how a person works with an agent -------
-# canopy-web#1955: two members asked ACE 17 questions as one-shot dispatches because nothing
-# told them `canopy agent use` existed.
+# People must be told `canopy agent use` exists, or they ask questions as one-shot dispatches.
 
 from orchestrator import agent_dispatch as AD  # noqa: E402
 
@@ -946,7 +945,7 @@ def test_cli_reply_needs_a_prompt_and_a_real_session(monkeypatch):
     assert r.exit_code != 0 and "not a canopy session id" in r.output
 
 
-# --- reply by TURN id: dispatch prints only a turn id (canopy-web#1974) ---------------------
+# --- reply by TURN id: dispatch prints only a turn id ---------------------
 
 TID = "7f3523ba-0000-4000-8000-000000000001"
 
@@ -1087,8 +1086,8 @@ def test_github_links_in_skips_a_url_already_linked():
 
 
 def test_cli_dispatch_card_links_the_briefs_issue_so_project_audit_can_see_it(monkeypatch):
-    """2026-10-26: two 'Fix canopy-web#2092' cards sat in progress after #2092 closed,
-    because the issue was only in the notes and check (f) reads links."""
+    """A 'Fix <repo>#<n>' card must carry the issue as a link, not only in the notes,
+    because check (f) reads links: otherwise the card sits in progress after the issue closes."""
     from orchestrator.project_audit import github_refs
 
     calls = []
@@ -1109,8 +1108,8 @@ def test_cli_dispatch_card_links_the_briefs_issue_so_project_audit_can_see_it(mo
 
 
 def test_a_queued_turn_says_why_it_is_waiting(monkeypatch):
-    """canopy-web writes `waiting` events on a queued turn (canopy-web#2315); `agent turns` shows
-    the newest, instead of the bare 'no runner has claimed it yet' that cost an hour."""
+    """canopy-web writes `waiting` events on a queued turn; `agent turns` shows
+    the newest, instead of the bare 'no runner has claimed it yet'."""
     def transport(method, url, headers, data):
         if url.endswith("/events"):
             return 200, json.dumps({"events": [

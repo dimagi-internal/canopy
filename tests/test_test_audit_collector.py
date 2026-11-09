@@ -79,8 +79,8 @@ def test_collect_works_when_no_pyproject(tmp_path):
 
 def test_detection_prefers_the_framework_with_more_tests(tmp_path):
     """A Django service with a little front-end tooling has vitest in
-    package.json and thousands of pytest tests. Detection used to return vitest
-    on sight of the dep, auditing the 143 JS tests and silently ignoring 6,012
+    package.json and thousands of pytest tests. Detection must not return vitest
+    on sight of the dep, which would audit the 143 JS tests and silently ignore 6,012
     Python ones."""
     import json
 

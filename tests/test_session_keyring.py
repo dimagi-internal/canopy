@@ -1,6 +1,6 @@
 """A Mac laptop runner's turns must be able to open gog's keyring.
 
-2026-10-02: a second operator's ACE laptop had `GOG_KEYRING_BACKEND=file` + a password
+A second operator's ACE laptop had `GOG_KEYRING_BACKEND=file` + a password
 in ACE's plugin .env. The runner (launchd: PATH + PYTHONUNBUFFERED, no TTY) spawned a
 caller turn that could neither read nor send mail, while every doctor — which loads the
 .env itself — passed. These pin: the check models a TURN's view, it is a hard fail in

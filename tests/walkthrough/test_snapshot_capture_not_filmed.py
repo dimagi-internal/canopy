@@ -1,4 +1,4 @@
-"""``--snapshots`` must not leave its full-page capture in the film (canopy#912).
+"""``--snapshots`` must not leave its full-page capture in the film.
 
 A full-page ``page.screenshot`` resizes the live viewport for the beyond-viewport
 paint, and the video recorder films it: the master shows the page shrunk onto a

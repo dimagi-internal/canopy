@@ -1,5 +1,5 @@
 """`canopy slack ingest` — the deterministic half of the slack-channel-ingest skill,
-against a mocked canopy-web (canopy-web#1533)."""
+against a mocked canopy-web."""
 from __future__ import annotations
 
 import pytest

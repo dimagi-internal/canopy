@@ -1,4 +1,4 @@
-"""Liveness detection for still-running sessions (canopy#593).
+"""Liveness detection for still-running sessions.
 
 The behaviour under test is a WRONG NUMBER, not an error: every case here would
 otherwise produce a confident false "this turn skipped a step" finding, which is the
@@ -35,10 +35,10 @@ def _transcript(tmp_path, sid, age_seconds=0.0):
 # --- the two sources, and why neither alone is enough -------------------------------
 
 def test_live_process_beats_a_stale_transcript(tmp_path):
-    """THE case canopy#593's own proposed fix would have got wrong.
+    """THE case a transcript-mtime-only check gets wrong.
 
     A manual-mode turn parked at an approval gate writes nothing while it waits on a
-    human. Measured 2026-09-04: hal session 96444cd8 sat 56.8 minutes stale and was a
+    human: a session can sit 56.8 minutes stale and be a
     live process throughout. mtime alone calls that finished and scores its checklist.
     """
     t = _transcript(tmp_path, SID, age_seconds=57 * 60)

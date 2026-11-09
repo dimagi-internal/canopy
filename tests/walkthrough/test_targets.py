@@ -90,7 +90,7 @@ def test_looks_like_selector_bare_leading_combinator_is_false():
 
 
 def test_looks_like_selector_plain_text_is_false():
-    """The exact strings that caused the 0.2.140 wait_for hang."""
+    """The exact strings that caused a wait_for hang."""
     assert looks_like_selector("Resolved wards") is False
     assert looks_like_selector("Creating 10 plans") is False
     assert looks_like_selector("Plan metric definitions") is False

@@ -1,9 +1,9 @@
 """Every canopy-web link the CLI prints or stores is ``/w/<workspace>/…``.
 
-canopy-web#1337 removes the flat ``/walkthrough/``, ``/review/``, ``/share/`` and
-``/ddd/`` pages outright (no redirect). On 2026-10-08 ACE emailed an external
-reviewer a flat ``/review/<id>`` link it copied from ``scripts.ddd.narrative
-post`` output — the server's raw ``url`` echoed into the JSON. So this is a
+canopy-web has no flat ``/walkthrough/``, ``/review/``, ``/share/`` or
+``/ddd/`` pages (no redirect). An agent that emails an external reviewer a flat
+``/review/<id>`` link copied from ``scripts.ddd.narrative post`` output (the
+server's raw ``url`` echoed into the JSON) sends a dead link. So this is a
 ratchet over OUTPUT, not just over helpers: each link-printing path is driven
 with the flat (and ``localhost``) links an older canopy-web returns, and the
 captured stdout/stderr/return value/run_state must hold no flat artifact link.
@@ -54,11 +54,11 @@ def workspace(monkeypatch):
     "https://canopy.dimagi.com/ddd/reef/reef-2026-01-01-001",
     "https://labs.connect.dimagi.com/canopy/review/abc/",
     "https://localhost/walkthrough/abc?t=s",
-    # the byte stream is scoped too since canopy-web#1338
+    # the byte stream is scoped too
     "https://canopy.dimagi.com/walkthrough/abc/content?t=x",
     # pre-tenancy walkthrough form
     "https://canopy.dimagi.com/w/22222222-2222-2222-2222-222222222222/content",
-    # moved under /w/<ws>/ by canopy-web#1340
+    # under /w/<ws>/
     "https://canopy.dimagi.com/storyboard/chlorine?t=x",
     "https://canopy.dimagi.com/narrative/chlorine?b=2",
     "https://canopy.dimagi.com/ddd-release/chlorine/chlorine-2026-10-08-004?t=x",
@@ -89,7 +89,7 @@ def test_app_url_requires_a_workspace():
 @pytest.mark.parametrize("raw, expected", [
     ("/review/r1/?t=x", f"{API}/w/connect/review/r1/?t=x"),
     (f"{API}/walkthrough/w1?t=s#scene-2", f"{API}/w/connect/walkthrough/w1?t=s#scene-2"),
-    # minted on localhost by an in-process MCP call (canopy-web#1289) → rebased
+    # minted on localhost by an in-process MCP call → rebased
     ("https://localhost/share/tok", f"{API}/w/connect/share/tok"),
     # already scoped: the server's workspace wins
     (f"{API}/w/dimagi/review/r1", f"{API}/w/dimagi/review/r1"),
@@ -264,7 +264,7 @@ def _ident():
 
 
 def test_send_refuses_a_flat_canopy_link():
-    """The 2026-10-08 email, as it went out."""
+    """An email carrying a flat review link, as an agent would write it."""
     from orchestrator.agent_email import AgentEmailError, send
 
     body = ("To watch all the cuts in one place: https://canopy.dimagi.com/review/"

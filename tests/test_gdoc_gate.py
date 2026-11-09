@@ -3,7 +3,7 @@ handed over unreviewed. Ported from eva's tests/test_gdoc_gate.py with the rail 
 
 WHY THE RAIL EXISTS. `skills/gdoc-review` shipped a deterministic checker and a SKILL.md
 telling the agent to fire it "right after publishing ... and BEFORE sharing the link", and nothing
-enforced it. On 2026-08-28 (session 483a4291) the agent published three docs, handed over three
+enforced it. In the failure this guards, the agent published three docs, handed over three
 links, and ran the gate zero times — then wrote the diagnosis herself: *"The right move is a
 hook that blocks handing over a docs.google.com link that hasn't passed check_gdoc.py."*
 Every input was already in context; prose lost anyway. CLAUDE.md's rule for that outcome is
@@ -118,7 +118,7 @@ def test_reading_a_doc_never_arms_the_rail(gate, tool, inp):
 # ------------------------------------------------------------------- the verdict
 
 def test_blocks_a_link_to_a_doc_written_and_never_gated(gate, tmp_path, capsys):
-    """The 2026-08-28 failure, exactly: publish, then hand the link over."""
+    """The failure this rail exists for, exactly: publish, then hand the link over."""
     gate.record({"tool_name": "Bash", "tool_input": {"command": f"gog docs insert {DOC_A} x --index 1"},
                  "tool_response": {"url": URL_A}})
     assert gate.check(stop_payload(tmp_path, f"Done — the brief is at {URL_A}")) == 2

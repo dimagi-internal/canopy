@@ -1,7 +1,7 @@
 """dispatch_outcomes: the dispatcher's report card, read off a machine-started session.
 
-DISPATCH_MARKER was added to SUBTRACT — to stop a dispatched brief being mined as the human
-shouting at the agent (canopy #488). This lens is the addition it also enables: the marker is the
+DISPATCH_MARKER exists to SUBTRACT — to stop a dispatched brief being mined as the human
+shouting at the agent. This lens is the addition it also enables: the marker is the
 only thing in a transcript that says "a machine started this session", so the span after it is the
 outcome of the dispatcher's judgment, and a genuine human turn inside that span is a person having
 to come back to work that was supposed to run unattended.
@@ -89,7 +89,7 @@ def test_ran_unattended_is_the_quiet_case():
 
 
 def test_a_human_who_argues_makes_it_contested():
-    """The headline case: work sent to run unattended that Jonathan had to come back and fight."""
+    """The headline case: work sent to run unattended that the human had to come back and fight."""
     out = dispatch_outcomes([
         brief(),
         assistant("I'll rewrite the whole module"),
@@ -144,7 +144,7 @@ def test_tool_results_are_not_human_turns():
 
 def test_hook_feedback_is_not_a_human_turn():
     """Replayed Stop-hook feedback is a `user` entry nobody typed. A close-out rail is written to
-    be forceful, so counting it would make every rail-firing session look contested (canopy #490)."""
+    be forceful, so counting it would make every rail-firing session look contested."""
     hook = human("Stop hook feedback: This turn is ending without its close-out. Run it NOW.")
     hook["isMeta"] = True
     out = dispatch_outcomes([brief(), assistant("wrapping up"), hook])
@@ -248,7 +248,7 @@ def test_the_reviewer_is_told_about_both_directions(tmp_path, verdict):
 
 
 # ── the phrasings that were invisible until this lens was fired at a real session ────────────
-# Found 2026-08-18: this lens's own first live run scored a session whose human turn was
+# Found when this lens's own first live run scored a session whose human turn was
 # "I can't follow what the fuck you're doing" as a neutral steer. `i don't follow` was in the
 # confusion list; `i can't follow` was not. Inability is the more common phrasing when someone
 # is genuinely lost, so the gap was not an edge case — it was the common case.
@@ -394,7 +394,7 @@ def test_the_bare_marker_is_always_emitted_verbatim():
     being suppressed, which is the exact bug the marker exists to prevent, reintroduced by the fix
     for it, only on the hosts nobody remembered to update.
 
-    Verified live 2026-08-18 against the then-installed canopy (0.2.413, which predates senders):
+    Verified live against a canopy build that predates senders:
     it suppressed a new-format brief correctly.
     """
     from orchestrator.agent_dispatch import stamp_dispatched

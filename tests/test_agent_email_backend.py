@@ -294,7 +294,8 @@ def test_thread_prints_messages_readably(web, no_gog):
 
 
 def test_read_with_a_conversation_uuid_reads_the_ses_thread(web, no_gog):
-    """`email read` used to hand a canopy conversation id to gog ("Invalid id value")."""
+    """`email read` reads a canopy conversation id from canopy-web, not gog (which
+    rejects it as "Invalid id value")."""
     r = _run("read", UUID, "--account", SES_ADDR)
     assert r.exit_code == 0, r.output
     assert ("GET", f"/api/mail/threads/marshellis/{UUID}", None) in web.calls

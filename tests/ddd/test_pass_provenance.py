@@ -1,10 +1,10 @@
-"""Per-pass provenance: a multi-pass judge must prove its passes returned (canopy#548).
+"""Per-pass provenance: a multi-pass judge must prove its passes returned.
 
-Reproduces both incidents from ``hh-poverty-targeting-answer-quality-2026-08-27-001``:
-the actionability judge's derivation sub-agents were killed and the parent wrote a
-verdict quoting passes that never returned; the arc judge stalled and its output
-was invented. Both verdicts were well-formed and passed the model check — which is
-why the only thing that can catch them is the sealed pass files on disk.
+Covers both failure modes: the actionability judge's derivation sub-agents are
+killed and the parent writes a verdict quoting passes that never returned; the arc
+judge stalls and its output is invented. Both verdicts are well-formed and pass the
+model check — which is why the only thing that can catch them is the sealed pass
+files on disk.
 """
 from __future__ import annotations
 

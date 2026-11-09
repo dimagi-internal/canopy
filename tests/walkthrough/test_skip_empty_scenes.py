@@ -1,4 +1,4 @@
-"""Unit tests for ``record_video.py --skip-empty-scenes`` (PR #107).
+"""Unit tests for ``record_video.py --skip-empty-scenes``.
 
 The filter is a tiny pure function (``filter_empty_scenes``) so the
 recording-loop-level effect can be pinned without spinning a Playwright
@@ -8,7 +8,7 @@ browser:
   - Scenes that survive keep their 1-based ORIGINAL spec ``scene_index``
     intact — matches snapshot filenames + ActionResult tagging.
   - The default (no flag) is back-compat: every scene records identically.
-  - The flag composes cleanly with the per-scene snapshot gate from PR #105:
+  - The flag composes cleanly with the per-scene snapshot gate:
     ``--skip-empty-scenes`` removes the scene from the recording loop AND
     ``Recorder.take_snapshot``'s own action-gate skips it — no double-handling.
 
@@ -118,7 +118,7 @@ def test_filter_microplans_back_half_pattern():
     assert [s["scene_index"] for s in out] == [1, 2, 3, 4, 5]
 
 
-# ---- composition with Recorder snapshot gate (PR #105) --------------------
+# ---- composition with Recorder snapshot gate --------------------
 
 
 class _FakePage:
@@ -186,19 +186,19 @@ def test_filter_composes_with_snapshot_gate(tmp_path):
 
 
 def test_recorder_records_all_scenes_when_filter_not_applied():
-    """Default (no --skip-empty-scenes) preserves the pre-PR #107
+    """Default (no --skip-empty-scenes) preserves the full
     iteration contract: the orchestrator visits every scene, including
-    the action-empty ones. PR #112 trimmed the no-nav initial_hold_ms
+    the action-empty ones. The no-nav initial_hold_ms is skipped
     (a stay-on-page scene has no page-load transition to settle for) so
-    a same-URL scene now contributes ``final_hold_ms`` only — but it
-    STILL runs through the loop, the snapshot gate from PR #105 still
+    a same-URL scene contributes ``final_hold_ms`` only — but it
+    still runs through the loop, the snapshot gate still
     fires (skipped for empty scenes), and ``run`` returns elapsed time
     for both."""
     page = _FakePage()
     rec = Recorder()  # no snapshot_dir → no snapshot files; clip behaviour unchanged
     scenes = [
         # Both scenes omit ``url`` so they're no-nav stay-on-page scenes —
-        # initial_hold_ms is correctly skipped under PR #112.
+        # initial_hold_ms is correctly skipped for a no-nav scene.
         {"title": "a", "actions": [{"kind": "press", "value": "Enter"}], "scene_index": 1},
         {"title": "narrative", "actions": [], "scene_index": 2},
     ]

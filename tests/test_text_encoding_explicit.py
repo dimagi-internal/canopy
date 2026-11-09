@@ -9,12 +9,11 @@ personas, SKILL.md files, memory notes, transcripts, templates — which are ful
 of em-dashes and arrows.  So the same call that is correct here raises
 ``UnicodeEncodeError`` there, or silently mojibakes the file.
 
-Measured 2026-09-03: ``canopy create-agent`` died at
+An omission is not harmless: ``canopy create-agent`` would die at
 ``agent_factory.py`` on the ``→`` inside the shipped CLAUDE.md template —
 that is step one of section 4 of the onboarding doc, so the documented path
-failed at its first command for every Windows operator, and left a 0-byte
-CLAUDE.md behind.  159 further call sites had the identical defect and were
-fixed in the same change.
+would fail at its first command for every Windows operator, and leave a 0-byte
+CLAUDE.md behind.
 
 A convention would not have held: the encoding-free spelling is shorter, it is
 what every example on the internet shows, and nothing on a Mac ever complains.

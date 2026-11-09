@@ -1,16 +1,16 @@
 """Tests for skipping ``initial_hold_ms`` when no navigation happens.
 
 Background: ``initial_hold_ms`` is a blind post-nav settle — it gives the
-freshly-loaded page a moment to paint before the cursor starts moving. PR
-#111 added a skip when the first action is ``wait_for`` (the wait_for IS
-the settle). This extends the skip: when ``goto_for_scene`` returns
+freshly-loaded page a moment to paint before the cursor starts moving. It is
+skipped when the first action is ``wait_for`` (the wait_for IS
+the settle), and also when ``goto_for_scene`` returns
 ``None`` (stay-on-page scene — typical of the continuation pattern in
-``SkipSameUrlRecorder`` and any scene authored without ``url:``), there's
+``SkipSameUrlRecorder`` and any scene authored without ``url:``): there's
 no page-load transition to settle for. The previous scene's
 ``final_hold_ms`` already provided any transition pause.
 
-These tests pin the new skip path while preserving every existing case
-(PR #111 behavior remains bit-identical for url-having scenes).
+These tests pin the no-navigation skip path alongside the existing cases
+(url-having scenes keep the wait_for-only skip).
 """
 
 from __future__ import annotations
@@ -85,10 +85,10 @@ class FakePage:
 
 
 def test_no_nav_skips_initial_hold_for_non_waitfor_first_action():
-    """The new skip path: scene has no ``url`` AND first action isn't
-    wait_for. PR #111 only skipped wait_for; this case (e.g. a stay-on-page
-    scene whose first action is ``scroll_to`` or ``click``) used to eat
-    ``initial_hold_ms`` of dead air. Now it doesn't."""
+    """The no-navigation skip path: scene has no ``url`` AND first action isn't
+    wait_for. The wait_for skip alone does not cover this case (e.g. a stay-on-page
+    scene whose first action is ``scroll_to`` or ``click``), which would eat
+    ``initial_hold_ms`` of dead air."""
     page = FakePage()
     rec = Recorder(config=SENTINEL_CONFIG, base_url="https://example.com")
     # No ``url`` → stay-on-page. First action is a target-less ``press``
@@ -120,7 +120,7 @@ def test_no_nav_also_skips_initial_hold_for_waitfor_first_action():
 
 def test_nav_with_non_waitfor_first_action_still_holds():
     """Back-compat: a scene with ``url`` AND non-wait_for first action
-    keeps the original PR #111 behavior — initial_hold_ms fires so the
+    keeps the wait_for-only skip behavior — initial_hold_ms fires so the
     freshly-loaded page has a moment to paint before the cursor moves."""
     page = FakePage()
     rec = Recorder(config=SENTINEL_CONFIG, base_url="https://example.com")
@@ -137,7 +137,7 @@ def test_nav_with_non_waitfor_first_action_still_holds():
 
 
 def test_nav_with_waitfor_first_action_skips_initial_hold():
-    """Back-compat: PR #111's wait_for-skip path is preserved — nav happens,
+    """Back-compat: the wait_for-skip path is preserved — nav happens,
     but wait_for is the settle, so initial_hold_ms is skipped."""
     page = FakePage()
     rec = Recorder(config=SENTINEL_CONFIG, base_url="https://example.com")

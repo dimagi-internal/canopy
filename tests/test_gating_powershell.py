@@ -1,20 +1,20 @@
 """Every shell rail applies to PowerShell too (agent-core/gating_guard.py SHELL_TOOLS).
 
-WHY THIS FILE EXISTS (2026-09-22). On Windows, Claude Code offers a PowerShell tool beside
-Bash, and every rail in the fleet applied to Bash alone. Shayoni Mazumdar found it on fizzy:
-`gog gmail send`, a Salesforce `curl -X POST` and `python sf-refresh.py` were blocked from Bash
-and allowed from PowerShell. It was three layers deep, and fixing any one alone does nothing:
+WHY THIS FILE EXISTS. On Windows, Claude Code offers a PowerShell tool beside
+Bash, and a rail that applied to Bash alone would let `gog gmail send`, a Salesforce
+`curl -X POST` and `python sf-refresh.py` through from PowerShell. Closing that takes three
+layers, and fixing any one alone does nothing:
 
   1. the factory matcher never routed PowerShell to the hook (tested in test_factory /
      test_agent_doctor),
   2. `subject_for` sent PowerShell down the JSON-of-input path, so the command arrived as
      `{"command": "gog gmail send …"}` and every rail anchored on `(?:^|[\\n;&|(])` missed on
-     the leading quote — she fixed the matcher alone first and her tests still failed,
+     the leading quote — fixing the matcher alone leaves those tests failing,
   3. every rail says `"tool": "Bash"`, which `matches` compared exactly.
 
-Her suite ran 11 cases across both shells, harmless commands included; the shape is kept here
-(before: 6/11, all five failures PowerShell). The negative half matters as much as the positive:
-a shell rail that starts blocking `Get-ChildItem` is a worse bug than the one fixed.
+The suite runs cases across both shells, harmless commands included. The negative half
+matters as much as the positive: a shell rail that starts blocking `Get-ChildItem` is a
+worse bug than the one it fixes.
 
 This drives the real engine (`run`, against the real shipped baseline) rather than a mirror.
 """

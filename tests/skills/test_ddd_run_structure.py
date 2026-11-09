@@ -167,13 +167,12 @@ def test_skill_has_convergence_step() -> None:
 
 
 def test_skill_wires_extra_verdicts_into_aggregator() -> None:
-    """Step 4 must plug the generic aggregator in (canopy#273 item 1): discover
-    any out-of-chain verdict artifacts in the run dir via load_verdict /
-    discover_extra_verdicts and pass them through extra_verdict_paths +
-    compute_convergence(extra=...).
+    """Step 4 must plug the generic aggregator in: discover any out-of-chain
+    verdict artifacts in the run dir via load_verdict / discover_extra_verdicts and
+    pass them through extra_verdict_paths + compute_convergence(extra=...).
 
-    Since 0.2.525 Step 4 is ONE command, ``python -m scripts.ddd.assemble`` (agents
-    kept hand-writing their own assemble scripts), so the wiring is pinned in that
+    Step 4 is ONE command, ``python -m scripts.ddd.assemble`` (so agents do not
+    hand-write their own assemble scripts), so the wiring is pinned in that
     module's source and the SKILL must route Step 4 through it."""
     content = (SKILL_DIR / "SKILL.md").read_text()
     assert "scripts.ddd.assemble" in content, "Step 4 must run python -m scripts.ddd.assemble"
@@ -203,7 +202,7 @@ def test_skill_wires_extra_verdicts_into_aggregator() -> None:
 
 def test_skill_stamps_user_verdict_metadata() -> None:
     """verdict-user.yaml must carry the unified verdict metadata stamp
-    (canopy#273 item 2) — kind: user_artifact / gate: gating /
+    — kind: user_artifact / gate: gating /
     live_state_verified: true. This is the one gating stamp written by THIS
     skill (the concept judge stamps its own); silent drift here would turn the
     user-artifact verdict advisory and break convergence."""
@@ -221,7 +220,7 @@ def test_skill_stamps_user_verdict_metadata() -> None:
 
 def test_skill_report_renders_cap_visible_verdict_lines() -> None:
     """Step 5's summary must render verdict lines via
-    run_pipeline.format_verdict_line (canopy#273 item 3), so a capped verdict
+    run_pipeline.format_verdict_line, so a capped verdict
     ("capped from X — not live-state verified") is never indistinguishable
     from an honest score."""
     content = (SKILL_DIR / "SKILL.md").read_text()

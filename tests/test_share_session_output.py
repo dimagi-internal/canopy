@@ -1,8 +1,8 @@
-"""What /canopy:share-session PRINTS — the two defects in dimagi-internal/canopy#484.
+"""What /canopy:share-session PRINTS — two defects it must not have.
 
-A share an agent made for a human was a black screen nobody could open. Neither
-half was a server bug: the upload succeeded, and the two lines describing it were
-wrong in ways that read as success. These tests pin the lines, because the failure
+A share an agent made for a human must not be a black screen nobody can open. Neither
+half is a server concern: the upload succeeds, and the two lines describing it could
+be wrong in ways that read as success. These tests pin the lines, because the failure
 mode is a string, not an exception.
 """
 from __future__ import annotations
@@ -34,8 +34,8 @@ def test_link_share_prints_the_share_url_alone():
 
 
 def test_link_share_normalizes_a_flat_or_localhost_server_share_url():
-    """canopy-web#1337: the flat /share/<token> route is removed, and an
-    in-process mint once came back on https://localhost."""
+    """The flat /share/<token> route is gone, and an in-process mint can come back on
+    https://localhost."""
     assert upload.format_session_result(
         API, visibility="link", slug="s", token="tok", workspace="connect",
         share_url="https://localhost/share/tok",

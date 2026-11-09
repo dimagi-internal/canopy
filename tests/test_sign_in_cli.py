@@ -267,8 +267,8 @@ def test_hook_is_inert_without_a_state_dir(tmp_path):
 
 
 def test_start_leaves_no_background_process(box, secrets):
-    """A watcher outlives its turn's login and chat key, so its secret reads can only 401
-    (2026-11-06, investigation 34). `start` leaves only the provider's own process."""
+    """A watcher outlives its turn's login and chat key, so its secret reads can only 401.
+    `start` leaves only the provider's own process."""
     r = run("start", "design")
     assert r.exit_code == 0, r.output
     assert "watch" not in r.output.lower().replace("watching", "")

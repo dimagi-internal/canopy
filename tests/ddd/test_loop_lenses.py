@@ -184,16 +184,16 @@ def test_page_values_reads_thousands_separators():
     assert 12058.0 in page_values("Borno 12,058 children")
 
 
-# --- canopy#533: both sides of the comparison read the same numbers ---------
+# --- both sides of the comparison read the same numbers ---------
 #
-# The docstring has always promised "spelled-out numbers count"; the code
+# The docstring promises "spelled-out numbers count"; the code
 # applied it to the narration only. So a dashboard printing prose UI copy —
 # "against the three Layer C rules below" — was invisible to a narration saying
 # "Three rules", and the lens failed a scene that was exactly correct.
 #
 # Prose UI copy spelling small numbers out is normal, so the class is not rare,
 # and this lens is deterministic — it gets trusted MORE than a judge's finding.
-# Under the #539 termination change, accuracy findings are forced to
+# Under the termination rules, accuracy findings are forced to
 # fix_kind: mechanical and auto-applied, so a false positive here does not add
 # noise: it auto-rewrites correct narration to satisfy a broken check.
 #
@@ -240,7 +240,7 @@ def test_page_values_reads_spelled_out_numbers():
 
 
 def test_a_spelled_out_number_that_agrees_with_the_page_passes(tmp_path):
-    """canopy#533 verbatim — the run that failed a correct scene."""
+    """Verbatim case: a correct scene must not be failed by the lens."""
     result = _one_scene_run(tmp_path, _LAYER_C_PAGE, _LAYER_C_NARRATION)
     assert result["numbers_checked"] == 1, "the claim must still be CHECKED, not skipped"
     assert result["verdict"] == "pass", result["findings"]
@@ -250,7 +250,7 @@ def test_a_spelled_out_number_that_disagrees_with_the_page_is_still_caught(tmp_p
     """The non-vacuity control: same shape, wrong count, must still fail.
 
     Only the count changes — 'three' -> 'seven' on the page. If this passes, the
-    #533 fix disabled the lens rather than repairing it.
+    fix disabled the lens rather than repairing it.
     """
     result = _one_scene_run(
         tmp_path,
@@ -320,7 +320,7 @@ def test_an_action_that_stops_working_is_a_regression(tmp_path):
 
 
 def test_a_deliberately_removed_action_warns_but_does_not_fail(tmp_path):
-    """canopy#624: replacing a no-op scroll_to with a pixel scroll — canopy's own
+    """Replacing a no-op scroll_to with a pixel scroll — canopy's own
     framing remedy — removed an action by design, and the guard failed a run that
     went 20/20 -> 23/23 with nothing regressed."""
     run = tmp_path / "run"
