@@ -186,7 +186,7 @@ def scan_strings() -> list[tuple[str, int, str, str]]:
     """(path, line, 'ref', context) for every issue/PR number in a .py string literal."""
     hits = []
     for p in _files():
-        if p.suffix != ".py":
+        if p.suffix != ".py" or "/tests/" in str(p):   # a test's strings are its fixtures
             continue
         rel = str(p.relative_to(ROOT))
         for line, text in _py_strings(p.read_text(errors="replace")):

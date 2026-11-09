@@ -684,3 +684,40 @@ def test_settings_without_a_gating_hook_is_not_flagged(tmp_path):
     (eva / ".claude" / "settings.json").write_text(json.dumps({"env": {"CANOPY_AGENT": "eva"}}))
     agents = fa.discover_agents(bases=[tmp_path])
     assert fa.legacy_gating_hook_findings(agents) == []
+
+
+# ── the stamped current-state guard reaches existing agents ──────────────────────
+
+GUARD = "tests/test_docs_current_state.py"
+
+
+def test_the_current_state_guard_is_a_stamped_whole_file_artifact():
+    arts = {a[0]: a for a in fa.ARTIFACTS}
+    assert arts["docs-current-state"][1] == pathlib.Path(GUARD) and arts["docs-current-state"][2] == "file"
+    assert GUARD in fa.canopy_agent_factory.templates()
+
+
+def test_agent_without_the_guard_gets_a_distribute_finding_and_a_verbatim_brief(tmp_path):
+    _write_agent(tmp_path, "eva", self_review=TEMPLATE_SELF_REVIEW,
+                 gating={"deny": [{"pattern": "BLOCK_RAW_SEND"}], "approve": []})
+    agents = fa.discover_agents(bases=[tmp_path])
+    findings = [f for f in fa.analyze(agents, baseline=BASELINE, candidates=False)
+                if f.artifact == "docs-current-state"]
+    assert len(findings) == 1 and findings[0].kind == "distribute" and findings[0].laggards == ["eva"]
+    brief = fa.change_brief(findings[0])
+    assert brief["target_relpath"] == GUARD
+    assert brief["add_reference"] == [fa.canopy_agent_factory.templates()[GUARD]]
+    assert "VERBATIM" in brief["instruction"]
+
+
+def test_stale_copy_of_the_guard_is_flagged_and_current_copy_is_not(tmp_path):
+    template = fa.canopy_agent_factory.templates()[GUARD]
+    for slug, body in (("eva", template), ("hal", template + "\n# local edit\n")):
+        d = _write_agent(tmp_path, slug, self_review=TEMPLATE_SELF_REVIEW,
+                         gating={"deny": [{"pattern": "BLOCK_RAW_SEND"}], "approve": []})
+        (d / "tests").mkdir()
+        (d / GUARD).write_text(body)
+    agents = fa.discover_agents(bases=[tmp_path])
+    findings = [f for f in fa.analyze(agents, baseline=BASELINE, candidates=False)
+                if f.artifact == "docs-current-state"]
+    assert [f.laggards for f in findings] == [["hal"]]

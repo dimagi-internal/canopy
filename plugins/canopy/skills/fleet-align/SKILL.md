@@ -39,7 +39,10 @@ each — so divergence is precise and computable, not vibes. Two things move:
 
 **Coverage — stamped AND agent-unique.** The template diff above only sees the factory-stamped
 artifacts (`turn`, `agent-turn-review`, `task-tracker`, `shipping`, `manager-sync`,
-`answer-caller` + `config/gating.json`), and only their numbered steps/headings. It is blind to
+`answer-caller` + `config/gating.json`), and only their numbered steps/headings. The stamped
+whole-file guard `tests/test_docs_current_state.py` is compared byte for byte: a factory-marked
+agent that lacks it or carries a different copy gets a DISTRIBUTE finding whose brief says to write
+the template verbatim, run `pytest tests`, and fix any history the guard reports in that repo. It is blind to
 what an agent grew on its own — which is exactly where fleet-generic tooling hides (eva's Google
 Docs QA checker, markdown linter and share-gate hook lived in eva's repo for weeks). So a second,
 deterministic **promotion-candidates** pass lists every NON-stamped `skills/<name>/`, `bin/<file>`

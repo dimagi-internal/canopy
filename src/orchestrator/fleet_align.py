@@ -83,6 +83,11 @@ def _artifacts() -> tuple:
             for relpath in canopy_agent_factory.templates()
             if (m := _SKILL_RELPATH.fullmatch(relpath))]
     arts.append(("gating", Path("config") / "gating.json", "gating"))
+    # Whole-file guards the factory stamps verbatim (the fleet-standard tests): same bytes in
+    # every agent, so a missing or differing copy is a plain DISTRIBUTE.
+    arts += [(Path(relpath).stem.removeprefix("test_").replace("_", "-"), Path(relpath), "file")
+             for relpath in canopy_agent_factory.templates()
+             if relpath.startswith("tests/") and relpath.endswith(".py")]
     return tuple(arts)
 
 
@@ -384,6 +389,27 @@ def _compare_skill(name, agents, template_markers, per_agent) -> list[Finding]:
 
 
 _RAIL_TOKEN = re.compile(r"[a-z][a-z0-9_-]+")
+
+
+def _compare_file(name, relpath, present) -> list[Finding]:
+    """A factory-stamped whole-file guard that differs from the template.
+
+    The file is stamped verbatim (no identity tokens), so any difference in a factory-marked
+    agent is a stale copy, not a lineage: DISTRIBUTE the template's text over it.
+    """
+    template = _template_text(relpath, "file")
+    if not template:
+        return []
+    stale = sorted(a.slug for a in present if a.factory_marked
+                   and (a.path / relpath).read_text(encoding="utf-8").strip() != template.strip())
+    if not stale:
+        return []
+    return [Finding(
+        kind="distribute", artifact=name, reference="canopy-template", laggards=stale,
+        summary=f"{name}: {len(stale)} agent(s) carry an out-of-date copy of the stamped file",
+        detail=[f"replace {Path(relpath).as_posix()} with the factory template"],
+        note="Stamped verbatim: copy the template over the agent's file, do not merge.",
+    )]
 
 
 def _rail_tokens(pattern: str) -> frozenset:
@@ -720,16 +746,20 @@ def analyze(agents: list[Agent], baseline: Optional[dict] = None, *,
         # A factory-marked agent LACKING a template-stamped skill entirely (not just drifted) —
         # e.g. eva predating task-tracker — is a distribute laggard the marker-diff can't see (it
         # only compares agents that HAVE the file). Flag the whole-skill gap explicitly.
-        if kind == "skill" and _template_text(relpath, kind):
+        if kind in ("skill", "file") and _template_text(relpath, kind):
             absent = sorted(a.slug for a in agents
                             if a.factory_marked and not (a.path / relpath).is_file())
+            what = "skill" if kind == "skill" else "file"
             if absent:
                 findings.append(Finding(
                     kind="distribute", artifact=name, reference="canopy-template", laggards=absent,
-                    summary=f"{name}: {len(absent)} agent(s) missing the whole skill (stamped by the factory)",
-                    detail=[f"add skills/{name}/SKILL.md (factory template)"],
-                    note="The agent predates this shared skill being added to the factory; stamp it in.",
+                    summary=f"{name}: {len(absent)} agent(s) missing the whole {what} (stamped by the factory)",
+                    detail=[f"add {Path(relpath).as_posix()} (factory template)"],
+                    note=f"The agent predates this shared {what} being added to the factory; stamp it in.",
                 ))
+        if kind == "file":
+            findings.extend(_compare_file(name, relpath, present))
+            continue
         if not present:
             continue
         if kind == "skill":
@@ -1024,6 +1054,15 @@ def change_brief(finding: Finding) -> Optional[dict]:
             instruction = (f"Add the missing deny rail(s) to {relpath} ONLY IF this agent actually has the "
                            "matching channel (e.g. an email adapter/bin shim); substitute the agent's real "
                            "name/slug for any {{AGENT_NAME}}/{{AGENT_SLUG}} placeholders. Otherwise skip.")
+    elif kind == "file":
+        add_reference = [text]
+        instruction = (f"Write the reference text to {relpath} VERBATIM (create it, or replace the agent's copy; "
+                       "it is stamped without identity tokens). Then run `python -m pytest -q tests` in the "
+                       "agent's repo: any history the guard reports in the agent's CLAUDE.md, persona, README, docs "
+                       "or skills is that repo's own to fix (state the rule as it holds now; the date, issue "
+                       "number or 'used to' narrative belongs in the PR description). Make sure the repo's CI "
+                       "runs the tests dir, and add the one-line current-state rule to its CLAUDE.md "
+                       "Conventions if it has none.")
     else:
         return None
     if not add_reference and not remove_hint:
