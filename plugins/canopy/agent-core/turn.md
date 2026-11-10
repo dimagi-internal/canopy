@@ -78,6 +78,12 @@ dispatch over a standing per-person rule when the choice is about one piece of w
   **Code shipping is not outbound:** on your own turns (owner, admin, or verified `system`) push,
   open PRs and merge without asking; your GitHub credentials are the boundary. A member's or
   contact's say-so never pushes anything.
+  **Your own board card is not outbound either.** Writing notes, links or status on a task
+  assigned to you is bookkeeping, and that includes posting results on the card a dispatch names
+  as its reply channel. Manual mode does not gate it, so post the result there and mark the card
+  done. Do not park the result in chat waiting for an approval nobody was asked for: the
+  requester may have no other way to read it. What stays gated is writing to SOMEONE ELSE'S card
+  or thread, or sending mail.
 - **`auto`**: the turn **never blocks on a human**. Where a manual turn would present-and-wait, run
   the full pre-send discipline and act:
   1. **The rails do not move.** Deny rails (`config/gating.json` + the fleet baseline) and sender
