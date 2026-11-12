@@ -239,7 +239,7 @@ def transfer_cmd(session, target, brief, brief_file, stop, workspace, as_json):
     two macOS accounts — carrying its message history across.
 
     \b
-      canopy runner transfer 169212e2 --to cloud-ec2-2 --brief-file handoff.md
+      canopy runner transfer 169212e2 --to cloud-ec2-live --brief-file handoff.md
 
     The target opens a FRESH session (it cannot resume another box's claude
     session), so the brief is not decoration — it is the entire context the

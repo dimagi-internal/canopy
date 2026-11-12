@@ -1906,7 +1906,7 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "different prompt is a different dispatch and an identical retry dedupes. "
                    "Pass a fresh key to deliberately re-dispatch the same work.")
 @click.option("--runner", "runner_ref", default="",
-              help="Pin the turn to ONE runner, by name (e.g. cloud-ec2-2) or id — for work "
+              help="Pin the turn to ONE runner, by name (e.g. cloud-ec2-live) or id — for work "
                    "only that box can do. Only it may claim the turn. Refused if the runner "
                    "is unknown/ambiguous/retired or does not list the agent in "
                    "capabilities.agents; see --queue-if-not-ready for paused/offline.")
