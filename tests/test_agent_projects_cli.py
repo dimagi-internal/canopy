@@ -194,8 +194,8 @@ def test_append_link_repeated_adds_every_link_on_project_and_task(fake_http):
     _projects(responses, _project())
     responses[("GET", "agents/hal/projects/P1/")] = (200, json.dumps(
         {**_project(), "links": [{"label": "Folder", "url": "https://drive/x"}]}))
-    responses[("GET", "agents/hal/tasks/")] = (200, json.dumps(
-        [{"ext_id": "T132", "links": [{"label": "Spec", "url": "https://spec"}]}]))
+    responses[("GET", "agents/hal/tasks/T132/")] = (200, json.dumps(
+        {"ext_id": "T132", "links": [{"label": "Spec", "url": "https://spec"}]}))
 
     for argv, existing in ((["project-set", "--project", "P1"], "https://drive/x"),
                            (["set", "--task-id", "T132"], "https://spec")):
