@@ -14,13 +14,35 @@ from orchestrator.agent_cli import _appended_links, parse_task_links
 
 
 class FakeClient:
-    """Only the surface `_appended_links` touches."""
+    """Only the surface `_appended_links` touches: the task detail GET, which resolves a
+    task key OR an ext_id (any case) and 404s on a miss, like the server."""
 
     def __init__(self, tasks):
         self._tasks = tasks
 
-    def list_tasks(self):
-        return self._tasks
+    def get_task(self, ref):
+        from orchestrator.agent_client import CanopyError
+
+        want = str(ref).strip().casefold()
+        for t in self._tasks:
+            if want in (str(t.get("ext_id") or "").casefold(), str(t.get("key") or "").casefold()):
+                return dict(t)
+        raise CanopyError(f"GET /api/agents/x/tasks/{ref}/ -> 404: task {ref} not found")
+
+
+def test_append_by_task_key_keeps_the_links_already_on_the_card():
+    """A KEY must read the card's links, not an empty list that the new link replaces."""
+    client = FakeClient([{"key": "CON-351", "ext_id": "long-slug",
+                          "links": [{"label": "Thread", "url": "https://mail/x"}]}])
+    out = _appended_links(client, "CON-351", "Run|https://labs/run/2")
+    assert [l["url"] for l in out] == ["https://mail/x", "https://labs/run/2"]
+
+
+def test_append_link_to_an_unreadable_card_refuses():
+    from orchestrator.agent_client import CanopyError
+
+    with pytest.raises(CanopyError):
+        _appended_links(FakeClient([{"ext_id": "T91", "links": []}]), "NOPE-1", "https://x")
 
 
 def test_append_keeps_the_links_already_on_the_card():

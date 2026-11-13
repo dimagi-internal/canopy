@@ -1229,7 +1229,7 @@ def agent_applied(slug, action_id, note):
 
 def _no_such_task(ref):
     return click.ClickException(
-        f"no task {ref!r} on this board — pass its T<N> ext_id "
+        f"no task {ref!r} on this board — pass its key (CON-351) or ext_id (T7) "
         f"(`canopy agent tasks --slug …` lists them)"
     )
 
@@ -1328,11 +1328,18 @@ def agent_set(slug, task_id, links, append_link, append_notes, project, parent, 
         raise click.ClickException(str(e))
 
 
-def _task_by_ref(client, ref):
-    """The task with ext_id `ref` from the board listing, or {} when there is none."""
-    want = str(ref).strip().casefold()
-    return next((t for t in client.list_tasks()
-                 if str(t.get("ext_id") or "").strip().casefold() == want), {})
+def _current_task(client, task_id):
+    """The card an append starts from, read by the SAME ref the PATCH will write to.
+
+    The read has to resolve exactly what the write resolves. The PATCH takes a task key
+    (`CON-351`) as well as an ext_id; a read that knows only one spelling sees "no card"
+    for the other, starts from an empty baseline, and the append PATCHes the new entry
+    alone over the card's whole history. The detail GET resolves a key, an ext_id and
+    either casing, and a miss is a 404 that `agent set` reports as "no such task" BEFORE
+    anything is written. Never turn "could not read" into "nothing there": an append with
+    no baseline is a wipe.
+    """
+    return client.get_task(task_id)
 
 
 def _appended_links(client, task_id, spec):
@@ -1342,7 +1349,7 @@ def _appended_links(client, task_id, spec):
     to start from what is already on the card. Without this, the only way to add one
     link is to restate every link the card already had.
     """
-    return _merge_links(list(_task_by_ref(client, task_id).get("links") or []), spec)
+    return _merge_links(list(_current_task(client, task_id).get("links") or []), spec)
 
 
 def _merge_links(current, spec):
@@ -1371,10 +1378,10 @@ def _appended_notes(client, task_id, text):
     back through --notes. Passing just the new entry there instead succeeds and silently
     deletes every earlier turn's log.
     """
-    current = (_task_by_ref(client, task_id).get("notes") or "").rstrip()
     addition = text.strip()
     if not addition:
         raise click.ClickException("--append-notes needs non-empty text")
+    current = (_current_task(client, task_id).get("notes") or "").rstrip()
     return f"{current}\n\n{addition}" if current else addition
 
 
