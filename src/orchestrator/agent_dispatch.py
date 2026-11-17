@@ -304,7 +304,8 @@ def build_turn_payload(slug: str, *, prompt: str = "", idempotency_key: str,
     # An absent prompt means "drain your board" — meaningfully different from an
     # empty one, so send nothing rather than "".
     if (prompt or "").strip():
-        payload["prompt"] = stamp_dispatched(prompt, sender=who, person=human)
+        payload["prompt"] = stamp_dispatched(prompt, sender=who, person=human,
+                                             card=(slug, task_ext_id) if task_ext_id else None)
     # A pin (TurnIn.runner_id): only that runner may claim the turn. Omitted, not null,
     # when unpinned, so an unpinned payload is byte-identical to before pins existed.
     if (runner_id or "").strip():
@@ -458,7 +459,22 @@ _UNKNOWN_PROVENANCE = (
 )
 
 
-def stamp_dispatched(prompt: str, sender: str = "", person: str = "") -> str:
+# The receiving agent's OWN card for this work. `agent dispatch` files it on the target's board
+# before the turn starts and threads its ext_id into origin_ref, which the model never sees. A
+# session that only reads the brief reports where the brief says (often the SENDER's card) and
+# never learns a card of its own exists, so that card stays `in_progress` on "Work this dispatch"
+# after the work ships and every later turn re-triages finished work as pending. Naming it here
+# is the only place the receiving model reads it.
+_OWN_CARD = (
+    "— Your board card for this work is {ext_id} on {slug}'s board. When you finish, put the "
+    "result on it and close it: `canopy agent set --slug {slug} --task-id {ext_id} --status done "
+    "--review \"<one line>\" --append-notes \"<what you did, with links>\"`. If work remains, set "
+    "its --next-action instead; never leave it reading \"Work this dispatch\"."
+)
+
+
+def stamp_dispatched(prompt: str, sender: str = "", person: str = "",
+                     card: tuple[str, str] | None = None) -> str:
     """Label `prompt` as dispatched, and SAY SO — and by whom — to the agent receiving it.
 
     `sender` is the agent slug doing the dispatching (not the target); `person` is the human's
@@ -480,6 +496,9 @@ def stamp_dispatched(prompt: str, sender: str = "", person: str = "") -> str:
         line = _PERSON_PROVENANCE.format(who=human)
     else:
         line = _UNKNOWN_PROVENANCE
+    if card and all((c or "").strip() for c in card):
+        slug, ext_id = (c.strip() for c in card)
+        line = f"{line}\n{_OWN_CARD.format(slug=slug, ext_id=ext_id)}"
     # The sender marker carries AGENT slugs only: the outcome lens grades agents by it, and a
     # person is not one (an email would not match SENDER_MARKER_RX anyway).
     tail = DISPATCH_MARKER + (f"\n<!-- canopy:dispatched-by={who} -->" if who else "")
