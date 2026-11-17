@@ -238,7 +238,7 @@ WRITER = {**OWN, "relationship": "member", "profile": "full", "role": "editor",
 
 
 def test_a_member_holding_write_drives_the_agent_and_ships_without_the_owner(tmp_path):
-    # Owner decision 2026-11-17: `write` is "drive the whole agent" (canopy-web access.md),
+    # `write` is "drive the whole agent" (canopy-web access.md),
     # so an editor's ask to fix code is pushed and merged without the owner. Sends,
     # publishing and deploys stay gated by the mode for them as for the owner.
     text = cc.summarize(WRITER, str(tmp_path / "e.json"), TID)
