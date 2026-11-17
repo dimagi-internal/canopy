@@ -275,6 +275,15 @@ function chatKey() {
     const key = readKey(path.join(root, "chat", `${chat}.key`));
     if (key) return key;
   }
+  // The task, found the SAME way the provenance headers find it: EMDASH_TASK_NAME
+  // first. Claude Code does not run this helper in the session's worktree, so a
+  // cwd-only guess found no task on a laptop and EVERY chat session there
+  // connected without its key — no current_page, no page tools, for its whole
+  // life — while the provenance headers beside it (which read the env) were fine.
+  for (const cand of taskCandidates()) {
+    const key = readKey(path.join(root, "task", `${cand}.key`));
+    if (key) return key;
+  }
   const worktrees = path.join(os.homedir(), "emdash", "worktrees") + path.sep;
   const cwd = process.cwd() + path.sep;
   if (!cwd.startsWith(worktrees)) return "";
