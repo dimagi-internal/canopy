@@ -643,7 +643,7 @@ def test_agent_dispatch_payload_is_byte_for_byte_what_it_was(net):
         "origin": "api",
         "idempotency_key": "k1",
         "origin_ref": {"thread_key": "k1", "task_ext_id": "T7"},
-        "prompt": stamp_dispatched("do it"),
+        "prompt": stamp_dispatched("do it", card=("hal", "T7")),
     }
 
 

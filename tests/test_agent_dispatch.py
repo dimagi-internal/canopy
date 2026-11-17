@@ -289,6 +289,24 @@ def test_build_turn_payload_still_omits_an_absent_prompt():
     assert "prompt" not in build_turn_payload("hal", prompt="   ", idempotency_key="k")
 
 
+def test_dispatched_prompt_names_the_receivers_own_card():
+    """The card `agent dispatch` filed must be named IN the prompt, or the session never closes it."""
+    from orchestrator.agent_dispatch import DISPATCH_MARKER
+
+    p = build_turn_payload("hal", prompt="review the repo", idempotency_key="k",
+                           task_ext_id="T179", sender="otto")["prompt"]
+    assert "Your board card for this work is T179 on hal's board" in p
+    assert "canopy agent set --slug hal --task-id T179 --status done" in p
+    assert p.startswith("review the repo")          # the ask still comes first
+    assert DISPATCH_MARKER in p and p.count(DISPATCH_MARKER) == 1
+    assert "<!-- canopy:dispatched-by=otto -->" in p
+
+
+def test_no_card_line_without_a_card():
+    p = build_turn_payload("hal", prompt="x", idempotency_key="k", sender="otto")["prompt"]
+    assert "Your board card" not in p
+
+
 def test_stamp_dispatched_is_idempotent():
     """A prompt built by one helper and passed through another must not collect two."""
     from orchestrator.agent_dispatch import DISPATCH_MARKER, stamp_dispatched
