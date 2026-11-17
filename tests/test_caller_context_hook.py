@@ -211,8 +211,8 @@ def test_no_site_says_nothing_about_one(tmp_path):
 # --- manual mode and code shipping (owner decision) -----------------------
 # Manual mode gates what reaches people or other systems. On the agent's OWN turns
 # (owner / admin / system, verified) it does not gate push / PR / merge — the agent's
-# GitHub credentials already bound which repos it can touch. Anyone else's say-so still
-# never pushes.
+# GitHub credentials already bound which repos it can touch. A verified asker holding
+# `write` drives the agent the same way; anyone else's say-so still never pushes.
 
 OWN = {**ENV, "relationship": "system", "verified": True, "turn_mode": {"mode": "manual", "basis": "agent"},
        "who": {"kind": "system", "via": "schedule:3", "assurance": "internal"},
@@ -229,6 +229,36 @@ def test_the_agents_own_manual_turn_does_not_gate_shipping(tmp_path, rel):
     assert "sends, publishing, public writes and deploys need the OWNER's approval first" in line
     assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
     assert "(push, deploy, merge, send, publish)" not in line
+
+
+WRITER = {**OWN, "relationship": "member", "profile": "full", "role": "editor",
+          "who": {"kind": "user", "via": "slack", "assurance": "slack_linked"},
+          "permissions": ["agent_edit", "read", "use:*", "write"],
+          "granted_by": "grant:workspace:connect:editor:"}
+
+
+def test_a_member_holding_write_drives_the_agent_and_ships_without_the_owner(tmp_path):
+    # `write` is "drive the whole agent" (canopy-web access.md),
+    # so an editor's ask to fix code is pushed and merged without the owner. Sends,
+    # publishing and deploys stay gated by the mode for them as for the owner.
+    text = cc.summarize(WRITER, str(tmp_path / "e.json"), TID)
+    line = _mode_line(text)
+    assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
+    assert "(push, deploy, merge, send, publish)" not in line
+    assert "holds `write` on the agent, so they drive it" in text
+    assert "does not hold the agent's authority" not in text
+
+
+@pytest.mark.parametrize("override", [
+    {"verified": False},
+    {"permissions": ["read"]},
+    {"profile": "confined"},
+    {"permissions": None},
+])
+def test_a_member_without_unconfined_verified_write_still_needs_the_owner(tmp_path, override):
+    text = cc.summarize({**WRITER, **override}, str(tmp_path / "e.json"), TID)
+    assert "(push, deploy, merge, send, publish) need the OWNER's approval first" in _mode_line(text)
+    assert "does not hold the agent's authority" in text
 
 
 @pytest.mark.parametrize("override", [{"relationship": "member"}, {"relationship": "contact"},
