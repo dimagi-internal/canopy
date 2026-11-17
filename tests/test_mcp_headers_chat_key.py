@@ -52,3 +52,22 @@ def test_a_session_that_drives_no_chat_sends_no_key(tmp_path):
     _key(home, "chat", CHAT, "chk_someone_elses")
     h = _run(home, tmp_path)
     assert h == {"Authorization": "Bearer canopy_pat_ECHO"}
+
+
+def test_a_laptop_chat_session_sends_its_key_when_the_helper_runs_outside_the_worktree(tmp_path):
+    """Claude Code runs the headers helper away from the session's worktree; emdash
+    names the task in EMDASH_TASK_NAME. The key must be found from that, exactly as
+    the provenance headers are — a cwd-only lookup sent no key from ANY laptop chat."""
+    home = tmp_path / "home"
+    elsewhere = tmp_path / "not-the-worktree"
+    elsewhere.mkdir()
+    _key(home, "task", "c-can-you-look-at-all-my-eva-a81a", "chk_laptop")
+    h = _run(home, elsewhere, {"EMDASH_TASK_NAME": "c-can-you-look-at-all-my-eva-a81a"})
+    assert h["X-Canopy-Chat-Key"] == "chk_laptop"
+
+
+def test_a_task_name_with_no_key_file_sends_no_key(tmp_path):
+    home = tmp_path / "home"
+    _key(home, "task", "someone-elses-task", "chk_other")
+    h = _run(home, tmp_path, {"EMDASH_TASK_NAME": "c-mine-1234"})
+    assert "X-Canopy-Chat-Key" not in h
