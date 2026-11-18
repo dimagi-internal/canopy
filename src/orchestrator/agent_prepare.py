@@ -69,6 +69,18 @@ GIT_HELPER = ('!f() { test "$1" = get || exit 0; [ -n "$GH_TOKEN" ] || exit 0; '
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
+def canopy_fleet_updater(home: Path) -> Optional[Path]:
+    """The installed canopy plugin's fleet updater script, or None."""
+    try:
+        reg = json.loads((home / ".claude" / "plugins" / "installed_plugins.json")
+                         .read_text(encoding="utf-8"))
+        entries = (reg.get("plugins") or {}).get("canopy@canopy") or []
+        script = Path(entries[0]["installPath"]) / "hooks" / "fleet_session_start_update.py"
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        return None
+    return script if script.is_file() else None
+
+
 @dataclass
 class RunnerCredentials:
     """What canopy-web lends a runner for one agent. Any field may be blank."""
@@ -371,15 +383,31 @@ class RunnerPreparer(Bootstrapper):
             return ""
 
     def install_dir_plugin(self, name: str, marketplace_name: str, path: Path) -> str:
-        """A plugin whose marketplace IS a clone on this box: the pull is the update."""
+        """A plugin whose marketplace IS a clone on this box. Installing copies it into the
+        plugin cache, which is what turns load, so an installed one is refreshed from the
+        clone's HEAD (`refresh_dir_plugin`): pulling the clone alone changes nothing a turn runs."""
         markets = self._listed(["marketplace", "list"]).split()
         if marketplace_name not in markets:
             err = self._claude(["marketplace", "add", str(path)])
             if err:
                 return err
         if f"{name}@{marketplace_name}" in self._listed(["list"]):
-            return ""
+            return self.refresh_dir_plugin(name, path)
         return self._claude(["install", f"{name}@{marketplace_name}"])
+
+    def refresh_dir_plugin(self, name: str, path: Path) -> str:
+        """Copy the clone's HEAD into the plugin cache when it is not what is installed, with
+        the canopy plugin's fleet updater (`--refresh`), so there is one copy path. A box
+        without that updater has nothing to refresh with and is left as it is."""
+        updater = canopy_fleet_updater(self.home)
+        if updater is None:
+            return ""
+        try:
+            r = self.run(["python3", str(updater), "--refresh", name, "--clone", str(path)],
+                         capture_output=True, text=True, timeout=600)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"refresh {name}: {e}"
+        return "" if r.returncode == 0 else f"refresh {name}: " + _first_line(r.stdout or r.stderr)
 
     def node_deps(self, path: Path) -> str:
         """`npm ci` (or install) when there are no node_modules, or the lockfile is newer than

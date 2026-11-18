@@ -43,6 +43,10 @@ from that clone (see refresh_cli). The canopy runner app does the same on a time
 has no runner app — this hook is the one thing that runs there. Opt out of just this
 step with CANOPY_CLI_REFRESH=0 (the runner's switch too).
 
+`--refresh <name> --clone <path>` does one plugin synchronously: it installs the clone's HEAD
+now (no fetch), for a caller that has just pulled the clone and is about to start a session on
+it — a cloud runner claiming a turn, or `canopy agent prepare`. See refresh_plugin.
+
 Opt out per machine (any one):
   * env  CANOPY_FLEET_AUTOUPDATE=0   (also: false / no / off)
   * touch ~/.claude/canopy/fleet-autoupdate-disabled
@@ -512,7 +516,17 @@ def update_one(target: dict) -> dict:
         result.update(status="up-to-date")
         return result
 
-    # Behind — hard-reset the (mirror) clone to origin, then sync into cache.
+    # Behind — hard-reset the (mirror) clone to origin, then sync into cache. Another process
+    # building this plugin right now (a runner's `--refresh`) is left to finish it.
+    with plugin_lock(name) as lock:
+        if not lock.held:
+            result.update(status="up-to-date")
+            return result
+        return _update_behind(target, result, clone, branch, remote_sha)
+
+
+def _update_behind(target: dict, result: dict, clone: str, branch: str, remote_sha: str) -> dict:
+    name = target["name"]
     # On `branch` FIRST: reset --hard rewrites the checked-out ref, whatever it is.
     err = ensure_on_branch(clone, branch)
     if err:
@@ -578,6 +592,23 @@ def _link_tree(src: Path, dest: Path) -> None:
     elif src.exists():
         dest.parent.mkdir(parents=True, exist_ok=True)
         _link(src, dest)
+
+
+def _link_node_modules(src: Path, dest: Path) -> str:
+    """Give a staged version the clone's node_modules by hard link, when it has none of its own.
+
+    A symlinked node_modules (a shared store) is linked as the same symlink. "" or an error."""
+    if dest.exists() or dest.is_symlink():
+        return ""
+    try:
+        if src.is_symlink():
+            if src.exists():
+                os.symlink(os.readlink(src), dest)
+        elif src.is_dir():
+            _link_tree(src, dest)
+    except (OSError, shutil.Error) as exc:
+        return f"link node_modules: {exc}"
+    return ""
 
 
 def preflight(name: str, staged: Path) -> str:
@@ -669,8 +700,12 @@ def build_and_swap(name: str, plugin_dir: Path, clone: str, cache_dir: Path) -> 
         shutil.rmtree(staged, ignore_errors=True)
         return f"staging: {exc}"
 
-    # Pure-Python mirror, not rsync: rsync does not exist on Windows.
-    err = mirror_tree(plugin_dir, staged, exclude={".git"})
+    # Pure-Python mirror, not rsync: rsync does not exist on Windows. The clone's node_modules
+    # is never copied (ACE's is 143 MB): the version keeps its own, linked above, or links the
+    # clone's in, and the plugin's installer below brings it up to the lockfile.
+    err = mirror_tree(plugin_dir, staged, exclude={".git", "node_modules"})
+    if not err:
+        err = _link_node_modules(plugin_dir / "node_modules", staged / "node_modules")
     if not err:
         # Runtime bundle (repo-root code declared in .claude-plugin/runtime.json). Fatal when
         # declared: a cache without its runtime strands every skill that shells into it.
@@ -706,8 +741,60 @@ def build_and_swap(name: str, plugin_dir: Path, clone: str, cache_dir: Path) -> 
     return ""
 
 
+class _Lock:
+    """An flock on ~/.claude/canopy/<name>.lock, waited for up to `wait` seconds.
+
+    `held` is False when it could not be had in time. Without fcntl (Windows) it is always held:
+    there is nothing to wait on, as before."""
+
+    def __init__(self, name: str, wait: float):
+        self.path, self.wait, self.fh, self.held = CANOPY_DIR / f"{name}.lock", wait, None, False
+
+    def __enter__(self) -> "_Lock":
+        try:
+            import fcntl
+        except ImportError:
+            self.held = True
+            return self
+        try:
+            CANOPY_DIR.mkdir(parents=True, exist_ok=True)
+            self.fh = open(self.path, "w", encoding="utf-8")
+        except OSError:
+            return self
+        deadline = time.monotonic() + self.wait
+        while True:
+            try:
+                fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.held = True
+                return self
+            except OSError:
+                if time.monotonic() >= deadline:
+                    return self
+                time.sleep(0.2)
+
+    def __exit__(self, *exc) -> None:
+        if self.fh is not None:
+            self.fh.close()
+
+
+def plugin_lock(name: str, wait: float = 0) -> _Lock:
+    """Held while one plugin's clone is reset and its version built and registered, so the
+    session-start run and a runner's `--refresh` never build the same plugin at once."""
+    return _Lock(f"fleet-update-{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}", wait)
+
+
 def patch_registry(name: str, mkt: str, version: str, cache_dir: str, sha: str) -> bool:
-    """Re-read installed_plugins.json, update just our entry, write atomically."""
+    """Re-read installed_plugins.json, update just our entry, write atomically.
+
+    Under a registry lock: two plugins refreshed at once must not each write back the
+    registry they read, dropping the other's entry."""
+    with _Lock("fleet-update-registry", 30) as lock:
+        if not lock.held:
+            return False
+        return _patch_registry(name, mkt, version, cache_dir, sha)
+
+
+def _patch_registry(name: str, mkt: str, version: str, cache_dir: str, sha: str) -> bool:
     data = load_json(REGISTRY)
     if not isinstance(data, dict):
         return False
@@ -913,6 +1000,99 @@ def main() -> int:
     return 0
 
 
+# ── `--refresh`: one plugin, to its clone's HEAD, now ──────────────────────────────────────
+#
+# The session-start run is asynchronous, so a session loads the version installed before it
+# started. A cloud runner pulls an agent's clone when it claims the agent's turn and calls this
+# straight after, before the turn starts, so the turn runs what was just pulled. It does not
+# fetch (the caller has) and does not move the clone: it installs the clone's HEAD. The
+# no-change case is one `git rev-parse`.
+
+REFRESH_WAIT = 120
+
+
+def _registry_key(registry: dict, marketplaces: dict, name: str, clone: str) -> str:
+    """The `name@marketplace` key installed from `clone`, else the only `name@…` key, else ""."""
+    keys = [k for k in (registry.get("plugins") or {}) if k.rpartition("@")[0] == name]
+    want = os.path.realpath(clone)
+    for key in keys:
+        loc = ((marketplaces or {}).get(key.rpartition("@")[2]) or {}).get("installLocation", "")
+        if loc and os.path.realpath(loc) == want:
+            return key
+    return keys[0] if len(keys) == 1 else ""
+
+
+def refresh_plugin(name: str, clone: str, *, wait: float = REFRESH_WAIT) -> dict:
+    """Install `clone`'s HEAD as plugin `name` unless it already is. Returns an update_one result."""
+    result = {"name": name, "status": "error", "old_ver": "?", "new_ver": "?",
+              "old_sha": "", "new_sha": "", "error": ""}
+    registry, marketplaces = load_json(REGISTRY), load_json(MARKETPLACES) or {}
+    key = _registry_key(registry if isinstance(registry, dict) else {}, marketplaces, name, clone)
+    if not key:
+        result["error"] = "not installed from this clone"
+        return result
+    rc, head, err = run(["git", "rev-parse", "HEAD"], 10, cwd=clone)
+    if rc != 0 or not head:
+        result["error"] = f"rev-parse HEAD: {err or rc}"
+        return result
+
+    def installed() -> dict:
+        reg = load_json(REGISTRY)
+        entries = (reg.get("plugins") or {}).get(key) if isinstance(reg, dict) else None
+        return entries[0] if entries else {}
+
+    def current(entry: dict) -> bool:
+        sha = entry.get("gitCommitSha", "")
+        # Installed AHEAD of the clone is left alone: never move a plugin backwards.
+        return sha == head or _is_ancestor(clone, head, sha)
+
+    entry = installed()
+    result.update(old_ver=entry.get("version", "?"), new_ver=entry.get("version", "?"),
+                  old_sha=entry.get("gitCommitSha", "")[:8], new_sha=entry.get("gitCommitSha", "")[:8])
+    if current(entry):
+        result["status"] = "up-to-date"
+        return result
+    with plugin_lock(name, wait) as lock:
+        if not lock.held:
+            result["error"] = f"another update of {name} held the lock for {wait:.0f}s"
+            return result
+        if current(installed()):                 # built by whoever held the lock
+            result["status"] = "up-to-date"
+            return result
+        plugin_dir = (Path(clone) / _plugin_source_subdir(clone, name)).resolve()
+        version = _read_version(plugin_dir)
+        if not version:
+            result["error"] = "unreadable plugin.json version"
+            return result
+        mkt = key.rpartition("@")[2]
+        cache_dir = PLUGINS_DIR / "cache" / mkt / name / version
+        err = build_and_swap(name, plugin_dir, clone, cache_dir)
+        if err:
+            result["error"] = err
+            return result
+        if not patch_registry(name, mkt, version, str(cache_dir), head):
+            result["error"] = "registry patch failed"
+            return result
+    result.update(status="updated", new_ver=version, new_sha=head[:8])
+    return result
+
+
+def _refresh_from_argv(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="fleet_session_start_update.py --refresh")
+    ap.add_argument("--refresh", required=True, metavar="NAME", help="installed plugin name")
+    ap.add_argument("--clone", required=True, help="the clone it is installed from")
+    ap.add_argument("--wait", type=float, default=REFRESH_WAIT,
+                    help="seconds to wait for another update of the same plugin")
+    args = ap.parse_args(argv)
+    result = refresh_plugin(args.refresh, str(Path(args.clone).expanduser()), wait=args.wait)
+    if result["status"] != "up-to-date":
+        log_run([result])
+    print(_fmt(result))
+    return 1 if result["status"] == "error" else 0
+
+
 # ── `--sync-cache`: the /canopy:update skill's Step 2, sharing this module's mirror ─────────
 #
 # A bash `rsync` in the update SKILL.md would not exist on Windows, and a failure there after
@@ -1021,11 +1201,13 @@ def _sync_cache_from_argv(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    # `--sync-cache` is a real CLI the updater chains on, so it must FAIL LOUDLY. The bare hook
-    # path below must do the opposite — a session-start hook that raises breaks every session —
+    # `--sync-cache` and `--refresh` are real CLIs their callers chain on, so they must FAIL
+    # LOUDLY. The bare hook path below must do the opposite — a session-start hook that raises breaks every session —
     # which is why the blanket `except: sys.exit(0)` cannot be allowed to cover both.
     if "--sync-cache" in sys.argv[1:]:
         sys.exit(_sync_cache_from_argv(sys.argv[1:]))
+    if "--refresh" in sys.argv[1:]:
+        sys.exit(_refresh_from_argv(sys.argv[1:]))
     try:
         sys.exit(main())
     except Exception:  # noqa: BLE001 — a session-start hook must NEVER fail loudly

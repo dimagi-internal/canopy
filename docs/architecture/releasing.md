@@ -111,10 +111,18 @@ each one pulls the marketplace clone, builds the new version in `~/.claude/plugi
 
 - **What is copied.** The plugin's working tree, untracked files included (a provisioner stages
   `.gws-sa-key.json` / `.env` into an agent clone, and a directory-source plugin reads them from its
-  root), minus `.git`, Claude Code's ephemeral worktrees (`EPHEMERAL_PATHS`) and any dangling symlink. An agent's
-  directory marketplace is its working clone, so a subagent worktree there is a stale whole-repo
-  checkout, and one dangling link in one would abort every update. A cloud runner reports
+  root), minus `.git`, `node_modules`, Claude Code's ephemeral worktrees (`EPHEMERAL_PATHS`) and any
+  dangling symlink. An agent's directory marketplace is its working clone, so a subagent worktree there is
+  a stale whole-repo checkout, and one dangling link in one would abort every update. `node_modules` is
+  hard-linked, never copied: the version keeps its own, or links the clone's, and the plugin's installer
+  (`bin/<name>-install-deps`, else `npm install`) brings it to the lockfile. A cloud runner reports
   a plugin that lags its clone in its `plugins` health check.
+- **At once, for one plugin: `--refresh <name> --clone <path>`.** The session-start run is `async`, so a
+  session loads the version installed before it began. `--refresh` installs the clone's HEAD now, without
+  fetching, and is one `git rev-parse` when nothing changed. A cloud runner calls it right after pulling
+  an agent's clone at claim, so the turn runs what was pulled; `canopy agent prepare` calls it for an
+  installed directory plugin, the agent's own and each `required_plugins` entry. A per-plugin lock keeps
+  it and the session-start run from building the same plugin at once; the registry write has its own.
 - **Never in place.** Running sessions execute from the version dir, and a commit without a bump lands in the
   same one, so the swap is two renames; the old tree is kept under `retired-*` for a day. A failed build,
   preflight or swap (Windows refuses to rename a dir in use) leaves the installed version untouched and the
@@ -131,7 +139,7 @@ each one pulls the marketplace clone, builds the new version in `~/.claude/plugi
   command, with the gating guard blocking a raw send. Guards fail closed, so one that cannot start would
   block every tool call. Detection is **SHA-driven** (installed `gitCommitSha` vs the channel ref), so it
   self-heals when a version bump was forgotten. The version bump is for label honesty, not for delivery.
-- **High blast radius, so built to be inert:** `async` (never blocks startup), a non-blocking lock,
+- **High blast radius, so built to be inert:** `async` (never blocks startup), non-blocking locks,
   timeout-bounded subprocesses, all errors swallowed, one line per run to
   `~/.claude/canopy/fleet-update.log`, nothing on stdout.
 

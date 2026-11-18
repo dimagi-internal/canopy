@@ -201,6 +201,52 @@ def test_required_plugins_are_pulled_every_pass_get_deps_and_key_files(tmp_path)
     assert not [n for n in rep.notes if n.startswith("plugins:")], rep.notes
 
 
+def _canopy_updater(home: Path) -> Path:
+    cache = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / "0.2.900"
+    (cache / "hooks").mkdir(parents=True)
+    (cache / "hooks" / "fleet_session_start_update.py").write_text("")
+    (home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(
+        {"plugins": {"canopy@canopy": [{"installPath": str(cache)}]}}))
+    return cache / "hooks" / "fleet_session_start_update.py"
+
+
+def test_an_installed_directory_plugin_is_refreshed_from_its_clone_not_left_as_installed(tmp_path):
+    _repo(tmp_path / "agents", required=[{"name": "chrome-sales",
+                                         "marketplace": "dimagi-internal/chrome-sales"}])
+    (tmp_path / "deps" / "chrome-sales" / ".git").mkdir(parents=True)
+    updater = _canopy_updater(tmp_path / "home")
+    box = Box(tmp_path)
+    box.markets |= {"ace", "chrome-sales"}
+    box.plugins |= {"ace@ace", "chrome-sales@chrome-sales"}
+
+    rep = _prep(tmp_path, box).prepare("ace")
+
+    refreshed = [c[0] for c in box.ran(["python3", str(updater), "--refresh"])]
+    assert refreshed == [
+        ["python3", str(updater), "--refresh", "ace", "--clone", str(tmp_path / "agents" / "ace")],
+        ["python3", str(updater), "--refresh", "chrome-sales",
+         "--clone", str(tmp_path / "deps" / "chrome-sales")]]
+    assert not box.ran(["claude", "plugin", "install"])
+    assert rep.plugins == "2 ok", rep.notes
+
+
+def test_a_failed_refresh_fails_the_plugins_step_with_the_updaters_reason(tmp_path):
+    _repo(tmp_path / "agents")
+    _canopy_updater(tmp_path / "home")
+    box = Box(tmp_path)
+    box.markets.add("ace")
+    box.plugins.add("ace@ace")
+    real = box.__call__
+
+    def run(argv, **kw):
+        if argv[:1] == ["python3"]:
+            return SimpleNamespace(returncode=1, stdout="ace error: sync: copy failed", stderr="")
+        return real(argv, **kw)
+
+    rep = _prep(tmp_path, run).prepare("ace")
+    assert any("refresh ace: ace error: sync: copy failed" in n for n in rep.notes), rep.notes
+
+
 def test_an_agent_repo_without_a_marketplace_manifest_fails_the_plugins_step(tmp_path):
     repo = _repo(tmp_path / "agents")
     (repo / ".claude-plugin" / "marketplace.json").unlink()

@@ -694,3 +694,126 @@ def test_main_refreshes_the_cli_after_updating_the_plugins(tmp_path, monkeypatch
     assert flu.main() == 0
     assert seen == ["plugin", ("cli", "/c")]
     assert "canopy-cli refreshed 0.2.1→0.2.2" in (tmp_path / "log").read_text()
+
+
+# ── `--refresh`: one plugin, to its clone's HEAD ────────────────────────────
+
+
+def _refresh_box(tmp_path, monkeypatch, *, name="ace", mkt="ace"):
+    """A clone one commit ahead of what is installed from it, with a node_modules of its own."""
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    monkeypatch.setattr(flu, "PLUGINS_DIR", plugins_dir)
+    monkeypatch.setattr(flu, "REGISTRY", plugins_dir / "installed_plugins.json")
+    monkeypatch.setattr(flu, "MARKETPLACES", plugins_dir / "known_marketplaces.json")
+    monkeypatch.setattr(flu, "CANOPY_DIR", tmp_path / "canopy")
+    monkeypatch.setattr(flu, "LOG_FILE", tmp_path / "canopy" / "fleet-update.log")
+    monkeypatch.setattr(flu, "install_node_deps", lambda *a: None)
+    monkeypatch.setattr(flu, "preflight", lambda *a: "")
+
+    clone = tmp_path / "agents" / name
+    clone.mkdir(parents=True)
+    _git(clone, "init", "-b", "main")
+    (clone / ".claude-plugin").mkdir()
+    (clone / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"name": mkt, "plugins": [{"name": name, "source": "./"}]}))
+    (clone / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": name, "version": "1.0.0"}))
+    (clone / "skills").mkdir()
+    (clone / "skills" / "s.md").write_text("old")
+    (clone / ".gitignore").write_text("node_modules/\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "old")
+    old_sha = _rev(clone)
+    old_cache = plugins_dir / "cache" / mkt / name / "1.0.0"
+    (old_cache / "skills").mkdir(parents=True)
+    (old_cache / "skills" / "s.md").write_text("old")
+
+    (clone / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": name, "version": "1.0.1"}))
+    (clone / "skills" / "s.md").write_text("new")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "new")
+    (clone / "node_modules" / "dep").mkdir(parents=True)
+    (clone / "node_modules" / "dep" / "index.js").write_text("x")
+
+    flu.REGISTRY.write_text(json.dumps({"plugins": {f"{name}@{mkt}": [
+        {"installPath": str(old_cache), "version": "1.0.0", "gitCommitSha": old_sha}]}}))
+    flu.MARKETPLACES.write_text(json.dumps({mkt: {"installLocation": str(clone)}}))
+    return clone, old_cache, old_sha
+
+
+def _entry(key="ace@ace"):
+    return json.loads(flu.REGISTRY.read_text())["plugins"][key][0]
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_installs_the_clones_head_and_links_its_node_modules(tmp_path, monkeypatch):
+    clone, _old, _ = _refresh_box(tmp_path, monkeypatch)
+
+    result = flu.refresh_plugin("ace", str(clone))
+
+    assert result["status"] == "updated", result
+    new_cache = flu.PLUGINS_DIR / "cache" / "ace" / "ace" / "1.0.1"
+    assert (new_cache / "skills" / "s.md").read_text() == "new"
+    assert not (new_cache / ".git").exists()
+    linked = new_cache / "node_modules" / "dep" / "index.js"
+    assert linked.stat().st_ino == (clone / "node_modules" / "dep" / "index.js").stat().st_ino, \
+        "node_modules is hard-linked from the clone, never copied"
+    assert _entry() == {**_entry(), "version": "1.0.1", "installPath": str(new_cache),
+                        "gitCommitSha": _rev(clone)}
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_is_a_no_op_when_the_clones_head_is_installed(tmp_path, monkeypatch):
+    clone, old_cache, _ = _refresh_box(tmp_path, monkeypatch)
+    flu.REGISTRY.write_text(json.dumps({"plugins": {"ace@ace": [
+        {"installPath": str(old_cache), "version": "1.0.0", "gitCommitSha": _rev(clone)}]}}))
+    monkeypatch.setattr(flu, "build_and_swap", lambda *a: pytest.fail("nothing to build"))
+
+    assert flu.refresh_plugin("ace", str(clone))["status"] == "up-to-date"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_never_moves_a_plugin_installed_ahead_of_its_clone_backwards(tmp_path, monkeypatch):
+    clone, old_cache, old_sha = _refresh_box(tmp_path, monkeypatch)
+    ahead = _rev(clone)
+    _git(clone, "reset", "--hard", old_sha)
+    flu.REGISTRY.write_text(json.dumps({"plugins": {"ace@ace": [
+        {"installPath": str(old_cache), "version": "1.0.1", "gitCommitSha": ahead}]}}))
+    monkeypatch.setattr(flu, "build_and_swap", lambda *a: pytest.fail("never move backwards"))
+
+    assert flu.refresh_plugin("ace", str(clone))["status"] == "up-to-date"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_installs_a_dependency_plugin_under_its_own_marketplace(tmp_path, monkeypatch):
+    clone, _old, _ = _refresh_box(tmp_path, monkeypatch, name="nova", mkt="nova-marketplace")
+
+    result = flu.refresh_plugin("nova", str(clone))
+
+    assert result["status"] == "updated", result
+    assert _entry("nova@nova-marketplace")["installPath"] == str(
+        flu.PLUGINS_DIR / "cache" / "nova-marketplace" / "nova" / "1.0.1")
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_waits_for_another_update_of_the_same_plugin_then_says_so(tmp_path, monkeypatch):
+    pytest.importorskip("fcntl")
+    clone, _old, old_sha = _refresh_box(tmp_path, monkeypatch)
+
+    with flu.plugin_lock("ace") as held:
+        assert held.held
+        result = flu.refresh_plugin("ace", str(clone), wait=0.3)
+
+    assert result["status"] == "error" and "held the lock" in result["error"]
+    assert _entry()["gitCommitSha"] == old_sha
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_cli_logs_and_exits_nonzero_on_error(tmp_path, monkeypatch, capsys):
+    clone, _old, _ = _refresh_box(tmp_path, monkeypatch)
+    assert flu._refresh_from_argv(["--refresh", "ace", "--clone", str(clone)]) == 0
+    assert "ace 1.0.0→1.0.1" in capsys.readouterr().out
+    assert "ace 1.0.0→1.0.1" in flu.LOG_FILE.read_text()
+
+    assert flu._refresh_from_argv(["--refresh", "nope", "--clone", str(clone)]) == 1
+    assert "not installed from this clone" in capsys.readouterr().out
