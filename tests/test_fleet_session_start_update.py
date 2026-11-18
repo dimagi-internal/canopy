@@ -409,6 +409,30 @@ class TestMirrorTree:
         err = mod.mirror_tree(tmp_path / "does-not-exist", tmp_path / "dest", exclude=set())
         assert err and "copy" in err
 
+    @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="needs symlinks")
+    def test_a_claude_code_worktree_with_a_dangling_link_does_not_freeze_the_plugin(self, tmp_path):
+        """On a runner an agent's directory marketplace IS its agent clone, and a subagent's
+        ephemeral worktree there (`.claude/worktrees/agent-…`, gitignored) can hold a
+        `node_modules` link to a dep store that has been pruned. Following it raises ENOENT and
+        aborts every update, which only fleet-update.log shows. A Claude Code worktree is a whole
+        repo checkout, never plugin content; a dangling link is never worth aborting the copy for."""
+        mod = flu
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        wt = src / ".claude" / "worktrees" / "agent-a0252edd"
+        wt.mkdir(parents=True)
+        (wt / "SKILL.md").write_text("a stale checkout", encoding="utf-8")
+        (wt / "node_modules").symlink_to(tmp_path / "pruned-store" / "node_modules")
+        (src / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        (src / "skills").mkdir()
+        (src / "skills" / "rule.md").write_text("current", encoding="utf-8")
+        (src / "skills" / "gone").symlink_to(tmp_path / "nowhere")
+        (src / "top-gone").symlink_to(tmp_path / "nowhere-either")
+        assert mod.mirror_tree(src, dest, exclude={".git"}) == ""
+        assert (dest / "skills" / "rule.md").read_text(encoding="utf-8") == "current"
+        assert (dest / ".claude" / "settings.json").is_file()
+        assert not (dest / ".claude" / "worktrees").exists()
+        assert not (dest / "skills" / "gone").exists() and not (dest / "top-gone").exists()
+
 
 # ── --sync-cache: the /canopy:update Step 2 cache sync ─────────────────
 

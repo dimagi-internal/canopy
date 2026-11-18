@@ -109,6 +109,12 @@ each one pulls the marketplace clone, builds the new version in `~/.claude/plugi
 (`build_and_swap`), runs `preflight`, renames it over the version-keyed cache dir, and patches
 `installed_plugins.json`. It also reinstalls the `canopy` CLI when it is behind the marketplace clone.
 
+- **What is copied.** The plugin's working tree, untracked files included (a provisioner stages
+  `.gws-sa-key.json` / `.env` into an agent clone, and a directory-source plugin reads them from its
+  root), minus `.git`, Claude Code's ephemeral worktrees (`EPHEMERAL_PATHS`) and any dangling symlink. An agent's
+  directory marketplace is its working clone, so a subagent worktree there is a stale whole-repo
+  checkout, and one dangling link in one would abort every update. A cloud runner reports
+  a plugin that lags its clone in its `plugins` health check.
 - **Never in place.** Running sessions execute from the version dir, and a commit without a bump lands in the
   same one, so the swap is two renames; the old tree is kept under `retired-*` for a day. A failed build,
   preflight or swap (Windows refuses to rename a dir in use) leaves the installed version untouched and the
