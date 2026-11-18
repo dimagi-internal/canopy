@@ -316,6 +316,10 @@ def _read_version(plugin_dir: Path) -> str:
 # runtime a skill executes is version-locked to the installed plugin.
 
 
+#: Paths (relative to the mirrored source) that are never plugin content.
+EPHEMERAL_PATHS = frozenset({".claude/worktrees"})
+
+
 def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = False) -> str:
     """Copy `src` into `dest`, in pure Python (an rsync-style mirror).
 
@@ -329,12 +333,31 @@ def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = Fals
     `delete=True` behaves like `--delete`, removing entries in dest that are not in src — except the ones we deliberately preserve
     (`.venv`/`uv.lock`, which uv materializes and a same-version resync must not thrash).
 
+    Never copied, whatever `exclude` says: Claude Code's ephemeral worktrees
+    (`.claude/worktrees/`, relative to `src`), and a symlink whose target is gone. An agent's
+    directory marketplace IS its working clone, so a subagent's worktree there is a whole stale
+    checkout, and one dangling `node_modules` link inside it aborted every ACE update on
+    cloud-ec2-live for twelve days (2026-11-06 → 11-18) with ENOENT.
+
     Returns "" on success, else an error string — matching the callers' contract.
     """
     PRESERVE = {".venv", "uv.lock"}
+    src_root = Path(src)
+
+    def _never(path: Path) -> bool:
+        if path.is_symlink() and not path.exists():
+            return True                                   # dangling: nothing to copy
+        try:
+            rel = path.relative_to(src_root).as_posix()
+        except ValueError:
+            return False
+        return rel in EPHEMERAL_PATHS
 
     def _skip(name: str) -> bool:
         return name in exclude
+
+    def _ignore(dirpath: str, names: list[str]) -> set[str]:
+        return {n for n in names if _skip(n) or _never(Path(dirpath) / n)}
 
     try:
         if delete and dest.is_dir():
@@ -348,13 +371,13 @@ def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = Fals
                     existing.unlink(missing_ok=True)
 
         for item in src.iterdir():
-            if _skip(item.name):
+            if _skip(item.name) or _never(item):
                 continue
             target = dest / item.name
             if item.is_dir() and not item.is_symlink():
                 shutil.copytree(
                     item, target,
-                    ignore=shutil.ignore_patterns(*exclude),
+                    ignore=_ignore,
                     dirs_exist_ok=True,
                 )
             else:
