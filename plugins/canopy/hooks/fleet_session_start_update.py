@@ -336,8 +336,8 @@ def mirror_tree(src: Path, dest: Path, *, exclude: set[str], delete: bool = Fals
     Never copied, whatever `exclude` says: Claude Code's ephemeral worktrees
     (`.claude/worktrees/`, relative to `src`), and a symlink whose target is gone. An agent's
     directory marketplace IS its working clone, so a subagent's worktree there is a whole stale
-    checkout, and one dangling `node_modules` link inside it aborted every ACE update on
-    cloud-ec2-live for twelve days (2026-11-06 → 11-18) with ENOENT.
+    checkout, and following one dangling `node_modules` link inside it raises ENOENT and
+    aborts the whole build, so the plugin never moves.
 
     Returns "" on success, else an error string — matching the callers' contract.
     """

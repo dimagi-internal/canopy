@@ -411,12 +411,11 @@ class TestMirrorTree:
 
     @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="needs symlinks")
     def test_a_claude_code_worktree_with_a_dangling_link_does_not_freeze_the_plugin(self, tmp_path):
-        """cloud-ec2-live, 2026-11-06 → 11-18: ACE's directory marketplace IS its agent clone, and
-        a subagent's ephemeral worktree there (`.claude/worktrees/agent-…`, gitignored) held a
-        `node_modules` link to a dep store since pruned. The mirror followed the link, hit ENOENT,
-        and aborted every update for twelve days (0.13.2204 installed while main was 0.13.2233),
-        logged only to fleet-update.log. A Claude Code worktree is a whole repo checkout, never
-        plugin content; a dangling link is never worth aborting the copy for."""
+        """On a runner an agent's directory marketplace IS its agent clone, and a subagent's
+        ephemeral worktree there (`.claude/worktrees/agent-…`, gitignored) can hold a
+        `node_modules` link to a dep store that has been pruned. Following it raises ENOENT and
+        aborts every update, which only fleet-update.log shows. A Claude Code worktree is a whole
+        repo checkout, never plugin content; a dangling link is never worth aborting the copy for."""
         mod = flu
         src, dest = tmp_path / "src", tmp_path / "dest"
         wt = src / ".claude" / "worktrees" / "agent-a0252edd"
