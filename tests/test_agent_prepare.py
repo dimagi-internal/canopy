@@ -204,7 +204,7 @@ def test_required_plugins_are_pulled_every_pass_get_deps_and_key_files(tmp_path)
 def _canopy_updater(home: Path) -> Path:
     cache = home / ".claude" / "plugins" / "cache" / "canopy" / "canopy" / "0.2.900"
     (cache / "hooks").mkdir(parents=True)
-    (cache / "hooks" / "fleet_session_start_update.py").write_text("")
+    (cache / "hooks" / "fleet_session_start_update.py").write_text("def refresh_plugin(): ...\n")
     (home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(
         {"plugins": {"canopy@canopy": [{"installPath": str(cache)}]}}))
     return cache / "hooks" / "fleet_session_start_update.py"
@@ -228,6 +228,18 @@ def test_an_installed_directory_plugin_is_refreshed_from_its_clone_not_left_as_i
          "--clone", str(tmp_path / "deps" / "chrome-sales")]]
     assert not box.ran(["claude", "plugin", "install"])
     assert rep.plugins == "2 ok", rep.notes
+
+
+def test_an_updater_without_refresh_is_never_run(tmp_path):
+    """An older canopy updater ignores `--refresh` and runs a whole-fleet update instead."""
+    _repo(tmp_path / "agents")
+    updater = _canopy_updater(tmp_path / "home")
+    updater.write_text("def main(): ...\n")
+    box = Box(tmp_path)
+    box.markets.add("ace")
+    box.plugins.add("ace@ace")
+    rep = _prep(tmp_path, box).prepare("ace")
+    assert not box.ran(["python3"]) and rep.plugins == "1 ok"
 
 
 def test_a_failed_refresh_fails_the_plugins_step_with_the_updaters_reason(tmp_path):

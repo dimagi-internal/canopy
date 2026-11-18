@@ -817,3 +817,15 @@ def test_refresh_cli_logs_and_exits_nonzero_on_error(tmp_path, monkeypatch, caps
 
     assert flu._refresh_from_argv(["--refresh", "nope", "--clone", str(clone)]) == 1
     assert "not installed from this clone" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_never_installs_a_clone_the_plugin_was_not_installed_from(tmp_path, monkeypatch):
+    clone, _old, old_sha = _refresh_box(tmp_path, monkeypatch)
+    other = tmp_path / "elsewhere" / "ace"
+    shutil.copytree(clone, other)
+
+    result = flu.refresh_plugin("ace", str(other))
+
+    assert result["status"] == "error" and "not installed from this clone" in result["error"]
+    assert _entry()["gitCommitSha"] == old_sha

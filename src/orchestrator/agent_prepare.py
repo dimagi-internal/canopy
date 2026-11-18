@@ -70,7 +70,8 @@ Runner = Callable[..., subprocess.CompletedProcess]
 
 
 def canopy_fleet_updater(home: Path) -> Optional[Path]:
-    """The installed canopy plugin's fleet updater script, or None."""
+    """The installed canopy plugin's fleet updater, or None when it has no `--refresh` (an older
+    one ignores the flag and runs a whole-fleet update instead)."""
     try:
         reg = json.loads((home / ".claude" / "plugins" / "installed_plugins.json")
                          .read_text(encoding="utf-8"))
@@ -78,7 +79,10 @@ def canopy_fleet_updater(home: Path) -> Optional[Path]:
         script = Path(entries[0]["installPath"]) / "hooks" / "fleet_session_start_update.py"
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
         return None
-    return script if script.is_file() else None
+    try:
+        return script if "def refresh_plugin(" in script.read_text(encoding="utf-8") else None
+    except OSError:
+        return None
 
 
 @dataclass

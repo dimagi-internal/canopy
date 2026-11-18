@@ -1012,14 +1012,15 @@ REFRESH_WAIT = 120
 
 
 def _registry_key(registry: dict, marketplaces: dict, name: str, clone: str) -> str:
-    """The `name@marketplace` key installed from `clone`, else the only `name@…` key, else ""."""
-    keys = [k for k in (registry.get("plugins") or {}) if k.rpartition("@")[0] == name]
+    """The `name@marketplace` key whose marketplace IS `clone`, else "". Never a guess: a clone
+    that is not where the plugin was installed from must not be installed over it."""
     want = os.path.realpath(clone)
-    for key in keys:
-        loc = ((marketplaces or {}).get(key.rpartition("@")[2]) or {}).get("installLocation", "")
-        if loc and os.path.realpath(loc) == want:
+    for key in (registry.get("plugins") or {}):
+        pname, _, mkt = key.rpartition("@")
+        loc = ((marketplaces or {}).get(mkt) or {}).get("installLocation", "")
+        if pname == name and loc and os.path.realpath(loc) == want:
             return key
-    return keys[0] if len(keys) == 1 else ""
+    return ""
 
 
 def refresh_plugin(name: str, clone: str, *, wait: float = REFRESH_WAIT) -> dict:
