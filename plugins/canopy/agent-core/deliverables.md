@@ -256,6 +256,14 @@ enrolled. **Do not fall back to direct edits on someone else's doc** — ask.
 - **Scratch files go in `WD=$(mktemp -d)`, never a fixed `/tmp/<name>`.** Agents share `/tmp`;
   a fixed path can silently hand you a sibling session's structure dump for the same doc, and a
   stale index writes to the wrong offset in a live doc.
+- **`gog docs insert --at "<heading text>" --markdown` gives every inserted paragraph the
+  anchor's heading style.** Insert a section above "Sources" and every body line, bullet and
+  source comes out as Heading 2 (and table cells get an explicit 18pt font), yet `canopy gdoc
+  check` still PASSES; only an 18pt run count far above your heading count gives it away. Anchor on
+  a NORMAL_TEXT paragraph, or repair the damage in one batch: `updateParagraphStyle` →
+  `NORMAL_TEXT` for every paragraph in the inserted range except your real headings, plus
+  `updateTextStyle` fontSize 11 over any inserted table. Pin the batch with
+  `writeControl.requiredRevisionId`.
 - **`find-replace` drops hyperlinks** on the text it rewrites. Check the span afterwards and
   re-link with `gog docs format <id> --match "<unique phrase>" --link <url>` (`--match` styles
   only the first hit, so make the phrase unique).
