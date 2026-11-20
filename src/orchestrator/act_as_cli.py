@@ -90,14 +90,6 @@ class StillPending(click.ClickException):
     exit_code = EXIT_STILL_PENDING
 
 
-class Refused(click.ClickException):
-    """canopy-web answered a request made as the person with a non-2xx status (kept on it)."""
-
-    def __init__(self, message: str, status: int):
-        super().__init__(message)
-        self.status = status
-
-
 class Transient(click.ClickException):
     """canopy-web could not be reached (DNS, connection, timeout). Local state is kept."""
 
@@ -602,11 +594,7 @@ def _clean_path(path: str) -> str:
     return path
 
 
-def as_person(method: str, path: str, body=None, workspace: Optional[str] = None):
-    """One canopy-web request AS THE PERSON, returning the parsed JSON (or the raw text when
-    the answer is not JSON). The in-process form of ``act-as get|call`` for canopy commands
-    that read as the person (``canopy brain preview --step-up``); the credential never leaves
-    this module. Raises :class:`click.ClickException` on no grant, a refusal or an error."""
+def _as_person(method: str, path: str, body, workspace: Optional[str]) -> None:
     key, doc = _held_token()
     method = method.upper()
     if doc.get("scope") == "read" and method != "GET":
@@ -622,16 +610,11 @@ def as_person(method: str, path: str, body=None, workspace: Optional[str] = None
             f"canopy-web no longer accepts this act-as credential ({_detail(text)}) — the grant "
             "ended (stopped, expired, or the turn finished). Deleted the local copy.")
     if status == 403:
-        raise Refused(f"refused as the person: {_detail(text)}", status)
+        raise click.ClickException(f"refused as the person: {_detail(text)}")
     if not (200 <= status < 300):
-        raise Refused(f"{method} {path} -> {status}: {_detail(text)}", status)
+        raise click.ClickException(f"{method} {path} -> {status}: {_detail(text)}")
     parsed = _json(text)
-    return parsed if parsed is not None else text
-
-
-def _as_person(method: str, path: str, body, workspace: Optional[str]) -> None:
-    got = as_person(method, path, body, workspace)
-    click.echo(got if isinstance(got, str) else json.dumps(got, indent=2))
+    click.echo(json.dumps(parsed, indent=2) if parsed is not None else text)
 
 
 @act_as_group.command("get")

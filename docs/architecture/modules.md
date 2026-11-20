@@ -13,7 +13,7 @@ Naming does most of the work; start from the CLI command (`docs/architecture/cli
 - **Identity and credentials**: `cred_cli.py`, `cred_resolve.py`, `vault_cli.py`, `vault_zk.py`, `vault_zk_cli.py`, `device_key*.py`, `secret_cli.py`, `act_as_cli.py`, `sign_in_cli.py`, `caller.py`. Contract: `docs/architecture/session-identity.md`.
 - **Mail and Google authoring**: `agent_email.py`, `inbox_rules.py`, `inbox_filters.py`, `review_receipt.py`, `agent_gdoc.py`, `agent_gslides.py`, `gdoc_suggest.py`, `gdoc_review.py`, `gdoc_email_blocks.py`. Contract: `docs/architecture/shared-gog-gdrive.md`.
 - **Fleet coordination**: `huddle*.py` + `huddle_types/`, `thread.py` + `thread_cli.py`, `checkin_cli.py`, `work_cursor.py`, `closeout.py` + `closeout_cli.py`, `decide_guard_*.py`, `eval_cli.py` + `eval_rubric.py`, `people_cli.py`, `slack_ingest_cli.py`, `kb_cli.py` + `kb_engine.py`.
-- **Cross-user session reading and issues**: `harvest.py`, `project_history.py`, `brain_cli.py` + `brain_report.py` (`canopy brain preview|report`: canopy-web's write-nothing brain preview, paged to disk and rendered locally), `session_sources.py`, `session_liveness.py`, `turn_synthesis.py` (stdlib transcript reducer shared by share-session, harvest and `session_upload`), `issue_origin.py`, `agent_review.py`, `openclaw_harvest.py`, `shareout.py`.
+- **Cross-user session reading and issues**: `harvest.py`, `project_history.py`, `session_sources.py`, `session_liveness.py`, `turn_synthesis.py` (stdlib transcript reducer shared by share-session, harvest and `session_upload`), `issue_origin.py`, `agent_review.py`, `openclaw_harvest.py`, `shareout.py`.
 
 ## Invariants and gotchas the code does not make obvious
 
@@ -23,7 +23,7 @@ Naming does most of the work; start from the CLI command (`docs/architecture/cli
 - **`inbox_rules.py` is the fleet's one inbound-email table and is vendored verbatim by canopy-web's runner.** Stdlib only. `tests/test_inbox_rules.py` pins its hash: edit it, re-vendor into canopy-web, update both pins.
 - **`agent_email.py` takes its identity from the agent repo's `config/agent.json`**; the gog client defaults to the slug and one agent never shares another's client. `send` refuses without a `review_receipt.py` receipt keyed to the body.
 - **`onepassword.py` is deliberately unreferenced** (kept for possible future use, no CLI surface); do not wire it into the credential path, the Canopy vault is the only credential source. `tests/test_onepassword_unreferenced.py` pins it.
-- **`act_as_cli.py`**: the act-as credential (`~/.canopy/act-as/<claude session>.token`, 0600) is used only by `act-as get|call` and in process by `as_person` (`brain preview --step-up`), never by `resolve_token` or the MCP helper; a fleet `always` rail blocks reading it. **`sign_in_cli.py`**: the PKCE verifier stays in the detached provider process, so canopy-web holds nothing.
+- **`act_as_cli.py`**: the act-as credential (`~/.canopy/act-as/<claude session>.token`, 0600) is used only by `act-as get|call`, never by `resolve_token` or the MCP helper; a fleet `always` rail blocks reading it. **`sign_in_cli.py`**: the PKCE verifier stays in the detached provider process, so canopy-web holds nothing.
 - **`dependency_health.py`** checks external dependencies of an agent box (run by `agent_doctor`); **`llm_output.py`** parses a `claude -p` reply into the YAML the caller asked for: use it rather than re-parsing in a new gate. **`repo_evidence.py`** is stdlib + git only.
 
 ## Plugin (`plugins/canopy/`)
