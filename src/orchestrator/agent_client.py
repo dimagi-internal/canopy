@@ -226,6 +226,15 @@ class AgentClient:
             body["origin_ref"] = dict(origin_ref)
         return self._call("POST", f"/api/agents/{self.slug}/turns/", body)
 
+    def declare_session_project(self, conversation_id: str, handle: str, tier: str = "core") -> dict:
+        """Tell canopy-web that the conversation THIS turn runs in worked on project `handle`
+        (`core`, or `adjacent` if it only touched it). canopy-web accepts it only from the
+        agent's own login inside its running turn, for that turn's own conversation; a
+        person's call on the link always wins. Raises like any call: callers that must not
+        fail (a close-out) use `agent_cli.declare_turn_project`."""
+        return self._call("PUT", f"/api/brain/sessions/{conversation_id}/projects/{handle}/",
+                          {"tier": tier})
+
     def put_skills(self, items: list[dict]) -> dict:
         return self._call("PUT", f"/api/agents/{self.slug}/skills/", {"skills": items})
 

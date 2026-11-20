@@ -1894,18 +1894,22 @@ def _ph_write(obj, out: str | None) -> None:
 @project_history_group.command("select")
 @click.option("--spec", "spec_path", required=True, type=click.Path(exists=True),
               help="Project spec (YAML/JSON): name, since, repo, paths, exclude_paths, "
-                   "mcp_prefixes, name_terms, artifact_terms, agent_project, overrides")
+                   "mcp_prefixes, name_terms, artifact_terms, agent_project, project_handle, "
+                   "overrides")
 @click.option("--checkout", type=click.Path(exists=True), default=None,
               help="Local checkout of the spec's repo (default: resolved by repo name)")
 @click.option("--no-local", is_flag=True, help="Canopy only — never read local transcripts")
 @click.option("--local-scan", is_flag=True,
               help="Also scan local transcripts canopy never indexed (strong signals only)")
+@click.option("--no-server", is_flag=True,
+              help="Ignore canopy-web's project links; classify every session from local signals")
 @click.option("--base-url", default=None, help="canopy-web base URL (default: runner.json)")
 @click.option("-o", "--out", default=None, help="Write the selection JSON here")
-def project_history_select(spec_path, checkout, no_local, local_scan, base_url, out):
-    """Choose the project's conversations: canopy is the index; a session is IN when
-    it owns a project PR, edits project paths or calls the project's MCP tools.
-    A name match alone makes it a CANDIDATE for the agent to decide."""
+def project_history_select(spec_path, checkout, no_local, local_scan, no_server, base_url, out):
+    """Choose the project's conversations. With `project_handle` in the spec, canopy-web's
+    stored project links decide (tier, how, confidence); otherwise, or when canopy-web has
+    no links for it, a session is IN when it owns a project PR, edits project paths or
+    calls the project's MCP tools, and a name match alone makes it a CANDIDATE."""
     import re
     from orchestrator import project_history as ph
 
@@ -1918,7 +1922,7 @@ def project_history_select(spec_path, checkout, no_local, local_scan, base_url, 
         m = re.search(r"github\.com/([^/]+/[^/]+)/pull/", first.get("url", ""))
         slug = m.group(1) if m else ""
     sel = ph.select(spec, call=call, prs=prs, slug=slug, use_local=not no_local,
-                    local_only_scan=local_scan)
+                    local_only_scan=local_scan, use_server=not no_server)
     if out:
         _ph_write(sel, out)
     convs = sel["conversations"]
@@ -1926,6 +1930,13 @@ def project_history_select(spec_path, checkout, no_local, local_scan, base_url, 
              for t in ("core", "adjacent", "candidate", "excluded")}
     click.echo(f"# {spec.name}: {len(prs)} project PRs, "
                f"{sel['coverage']['canopy_sessions_walked']} canopy sessions walked → {tiers}")
+    cov = sel["coverage"]
+    if cov.get("selection_source") == "canopy-web":
+        click.echo(f"# selected by canopy-web's project links: {cov['server_linked']} linked"
+                   + (f", {len(cov['server_linked_not_walked'])} outside the window"
+                      if cov.get("server_linked_not_walked") else ""))
+    else:
+        click.echo("# selected by local signals (no canopy-web project links)")
     if sel["coverage"]["split_sessions"]:
         click.echo(f"# split back into conversations (canopy merged them): "
                    f"{len(sel['coverage']['split_sessions'])} session record(s)")

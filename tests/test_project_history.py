@@ -228,6 +228,112 @@ def test_select_uses_canopy_activity_and_splits_a_merged_session(tmp_path):
     assert cmp["hits"] == 3 and cmp["truth"] == 4 and cmp["missed"] == [["s-missing"]]
 
 
+class LinkedCanopy(FakeCanopy):
+    """FakeCanopy plus canopy-web's project-links route: ``links`` is the list it
+    answers, or an int status it refuses with (404 = an older canopy-web)."""
+
+    def __init__(self, sessions=(), links=None, **kw):
+        super().__init__(sessions, **kw)
+        self.links = links
+
+    def __call__(self, method, path, body=None):
+        if path.startswith("/api/brain/"):
+            self.calls.append(path)
+            if isinstance(self.links, int):
+                from orchestrator.canopy_web import CanopyError
+                raise CanopyError(f"GET {path} -> {self.links}: Not Found")
+            return self.links
+        return super().__call__(method, path, body)
+
+
+def _link(sid, tier="core", how="judged", confidence=0.9):
+    return {"session_id": sid, "title": sid, "workspace": "w", "tier": tier, "how": how,
+            "confidence": confidence, "started_at": "2026-09-12T00:00:00Z"}
+
+
+def _linked_sessions():
+    return [
+        # Strong local signal (MCP calls), but canopy-web did NOT link it.
+        _session("s-mcp", "c-review", "2026-10-08T00:00:00Z", "2026-10-09T00:00:00Z", activity={
+            "mcp_tools": {"mcp__connect_labs__supply_chain_worker_stock": 5}}),
+        # No local signal at all, but linked as core (e.g. a dispatched session).
+        _session("s-quiet", "ops-check", "2026-09-20T00:00:00Z", "2026-09-20T01:00:00Z"),
+        # Name only locally (a candidate), linked as adjacent.
+        _session("s-name", "supply-functionality", "2026-09-10T05:00:00Z",
+                 "2026-09-10T06:00:00Z", project="nowhere"),
+    ]
+
+
+def test_select_reads_project_links_from_canopy_web(tmp_path):
+    fake = LinkedCanopy(_linked_sessions(), links=[
+        _link("s-quiet", how="dispatched", confidence=None),
+        _link("s-name", tier="adjacent", how="declared"),
+        _link("s-elsewhere")])
+    sel = ph.select(_spec(project_handle="supply", workspaces=["connect"]), call=fake, prs={},
+                    users_root=str(tmp_path), now="2026-10-10T00:00:00Z", fetch_inputs=False)
+    by_id = {c["id"]: c for c in sel["conversations"]}
+    assert set(by_id) == {"s-quiet", "s-name"}            # the server's call, not the MCP signal
+    assert by_id["s-quiet"]["tier"] == "core" and by_id["s-quiet"]["link_how"] == "dispatched"
+    assert by_id["s-name"]["tier"] == "adjacent" and by_id["s-name"]["link_confidence"] == 0.9
+    assert by_id["s-name"]["reasons"] == ["linked on canopy-web (declared, confidence 0.90)"]
+    cov = sel["coverage"]
+    assert cov["selection_source"] == "canopy-web" and cov["server_linked"] == 3
+    assert cov["server_linked_not_walked"] == ["s-elsewhere"]
+    assert any(c.startswith("/api/brain/workspaces/connect/projects/supply/sessions/?tiers=core%2Cadjacent")
+               for c in fake.calls)
+    # The agent's spec calls still win over a stored link.
+    sel2 = ph.select(_spec(project_handle="connect/supply", exclude_sessions=["s-quiet"]),
+                     call=fake, prs={}, users_root=str(tmp_path), now="2026-10-10T00:00:00Z",
+                     fetch_inputs=False)
+    assert {c["id"]: c["tier"] for c in sel2["conversations"]}["s-quiet"] == "excluded"
+
+
+@pytest.mark.parametrize("answer", [404, 405, 501, []])
+def test_select_falls_back_to_local_signals_without_links(tmp_path, answer):
+    fake = LinkedCanopy(_linked_sessions(), links=answer)
+    sel = ph.select(_spec(project_handle="supply", workspaces=["connect"]), call=fake, prs={},
+                    users_root=str(tmp_path), now="2026-10-10T00:00:00Z", fetch_inputs=False)
+    tiers = {c["id"]: c["tier"] for c in sel["conversations"]}
+    assert tiers == {"s-mcp": "core", "s-name": "candidate"}   # today's selection, unchanged
+    assert sel["coverage"]["selection_source"] == "local"
+    assert any(c.startswith("/api/brain/") for c in fake.calls)
+
+
+def test_select_without_a_handle_never_asks_canopy_web(tmp_path):
+    fake = LinkedCanopy(_linked_sessions(), links=[_link("s-quiet")])
+    ph.select(_spec(), call=fake, prs={}, users_root=str(tmp_path),
+              now="2026-10-10T00:00:00Z", fetch_inputs=False)
+    assert not any(c.startswith("/api/brain/") for c in fake.calls)
+
+
+def test_select_merges_server_links_with_local_only_transcripts(tmp_path):
+    users = tmp_path / "Users"
+    root = "/Users/{acct}/emdash/worktrees/connect-labs-1234abcd/emdash-{name}"
+    # A local transcript canopy-web never indexed, doing real project work.
+    _transcript(users, "jjackson", root.format(acct="jjackson", name="offline-a1"), "loc", [
+        _user("fix the supply stock view", "2026-09-15T10:00:00Z"),
+        _asst("2026-09-15T11:00:00Z", "ok", tools=[
+            ("Edit", {"file_path": "/x/connect_labs/supply_chain/views.py"})])])
+    # A transcript of a canopy session canopy-web saw and did NOT link: stays out.
+    unlinked_cwd = root.format(acct="jjackson", name="review-b2")
+    _transcript(users, "jjackson", unlinked_cwd, "unl", [
+        _user("review supply", "2026-09-16T10:00:00Z"),
+        _asst("2026-09-16T11:00:00Z", "ok", tools=[
+            ("Edit", {"file_path": "/x/connect_labs/supply_chain/review.py"})])])
+    sessions = _linked_sessions() + [
+        _session("s-unl", "review", "2026-09-16T00:00:00Z", "2026-09-16T12:00:00Z",
+                 activity={"cwd": unlinked_cwd})]
+    fake = LinkedCanopy(sessions, links=[_link("s-quiet")])
+    sel = ph.select(_spec(project_handle="supply", workspaces=["connect"]), call=fake, prs={},
+                    users_root=str(users), local_only_scan=True, now="2026-10-10T00:00:00Z",
+                    fetch_inputs=False)
+    by_id = {c["id"]: c for c in sel["conversations"]}
+    assert set(by_id) == {"s-quiet", "local:loc"}
+    assert by_id["s-quiet"]["link_how"] == "judged"
+    assert by_id["local:loc"]["source"] == "local-only" and by_id["local:loc"]["tier"] == "core"
+    assert by_id["local:loc"]["link_how"] == ""                   # classified locally
+
+
 # ── collection + artifacts ───────────────────────────────────────────────────
 
 def test_collect_prefers_transcript_text_and_gathers_artifact_evidence(tmp_path):

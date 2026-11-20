@@ -101,7 +101,9 @@ dispatch over a standing per-person rule when the choice is about one piece of w
   5. **The audit trail is the approval, moved after the fact.** Every auto turn closes with
      `canopy agent turn --slug <slug> --session-id <id> --title "<what this turn did>"`. This is an
      automatic close step (the one exception to Step 4's "publishing is manual", scoped to the turn
-     record only).
+     record only). When the turn worked on ONE project, add `--project <handle>` (`--project-tier
+     adjacent` if it only touched it): canopy-web records that this turn's own conversation belongs
+     to the project. Best effort; it never fails the close-out. Leave it off for a one-off.
   6. **Status line:** an UNATTENDED auto turn ends **"✅ Session complete"** with the sent-summary,
      never "⏸ waiting on you" (blocked items are named, not parked). With the person present there
      is no status line.
@@ -729,6 +731,7 @@ asks to publish/share:
   canopy agent turn --slug <slug> --title "<what this turn did>" \
     --session-id <claude-session-id> \       # REQUIRED — one of --session-id or --upload
     --task <ext_id> [--task <ext_id> …]      # the board task(s) this turn advanced
+    [--project <handle>]                     # the project this turn worked on (its own conversation only)
     # --upload   publishes a /share/<token> link of the transcript (an outbound action; rides the
     #            same approval gate as a send). Use ONLY if the human asked to share; pass it OR
     #            --session-id, never neither.

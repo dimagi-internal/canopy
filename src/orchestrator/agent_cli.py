@@ -1,6 +1,8 @@
 """`canopy agent …` — thin CLI over AgentClient for shell-driven agents."""
 import json
+import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -8,6 +10,9 @@ import click
 import yaml
 
 from orchestrator.agent_client import AgentClient, catalog_from_repo, CanopyError
+
+
+log = logging.getLogger(__name__)
 
 
 def _client(slug, **identity):
@@ -156,13 +161,21 @@ def agent_sync(slug, doc_url, title, summary, grades, period_start, period_end, 
               help="Transcript .jsonl to upload (default: newest for the cwd).")
 @click.option("--full", is_flag=True, help="Upload the raw transcript instead of the reduced one.")
 @click.option("--visibility", type=click.Choice(["link", "private"]), default="link")
+@click.option("--project", "project_ref", default="", metavar="HANDLE",
+              help="The project this turn worked on (its handle, <workspace>/<handle>, P<N> or "
+                   "name). Tells canopy-web this turn's OWN conversation belongs to it. "
+                   "Best effort: never fails the close-out. Leave it off for a one-off.")
+@click.option("--project-tier", type=click.Choice(["core", "adjacent"]), default="core",
+              help="core (the turn worked on the project) or adjacent (only touched it).")
 def agent_turn(slug, title, summary, task_ext_ids, work_product_urls, source,
-               cli_session_id, upload, transcript, full, visibility):
+               cli_session_id, upload, transcript, full, visibility, project_ref, project_tier):
     """Package this turn as a unit of work; optionally upload its transcript.
 
     The transcript is OPTIONAL — without --upload this just records the request(s)
     advanced, the summary, and the deliverables. With --upload it reduces the
-    session (conversation-only) to a /share/<token> link hung off the turn."""
+    session (conversation-only) to a /share/<token> link hung off the turn.
+    With --project, the turn's own canopy-web conversation is declared part of
+    that project (best effort, after the record)."""
     try:
         session_slug = share_token = ""
         if upload:
@@ -175,12 +188,66 @@ def agent_turn(slug, title, summary, task_ext_ids, work_product_urls, source,
         if not cli_session_id:
             raise click.ClickException(
                 "pass --session-id (the Claude session id), or --upload to derive it from the transcript")
-        _emit(_client(slug).post_turn(
+        client = _client(slug)
+        _emit(client.post_turn(
             cli_session_id=cli_session_id, title=title, summary=summary,
             task_ext_ids=list(task_ext_ids), work_product_urls=list(work_product_urls),
             session_slug=session_slug, share_token=share_token, source=source))
     except (CanopyError, RuntimeError, OSError) as e:
         raise click.ClickException(str(e))
+    if project_ref.strip():
+        declare_turn_project(client, project_ref, project_tier)
+
+
+_HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$")
+
+
+def _project_handle(client, ref: str) -> str:
+    """A `--project` value → the project's canopy-web handle, or "" when none is knowable.
+    `<workspace>/<handle>` and a bare handle need no read; a `P<N>` or a name is looked up
+    on the agent's board (a failed read gives "")."""
+    raw = str(ref or "").strip()
+    if "/" in raw:
+        raw = raw.rsplit("/", 1)[1]
+    key = raw.casefold()
+    try:
+        projects = client.list_projects()
+    except Exception as e:  # noqa: BLE001 — best effort
+        log.debug("project lookup for %r failed: %s", ref, e)
+        projects = []
+    for p in projects:
+        names = {str(p.get(k) or "").strip().casefold() for k in ("ext_id", "handle", "name")}
+        address = str(p.get("address") or "")
+        if key in names - {""} or (address and address.rsplit("/", 1)[-1].casefold() == key):
+            handle = str(p.get("handle") or "") or address.rsplit("/", 1)[-1]
+            if handle:
+                return handle.lower()
+    return raw.lower() if _HANDLE_RE.match(raw.lower()) and not re.match(r"^p\d+$", key) else ""
+
+
+def declare_turn_project(client, project_ref: str, tier: str = "core") -> str:
+    """Best effort, at close-out: tell canopy-web that THIS turn's own conversation worked on
+    the project. Only the turn's own conversation, from provenance (the runner's
+    `CANOPY_SESSION_ID`, the caller envelope or the laptop's by-task record), never one a
+    caller names; nothing happens outside a canopy-web turn. Returns what happened
+    (`declared` | `skipped:<why>` | `failed:<why>`), never raises: an older canopy-web
+    without the route (404/405/501), a refusal or no answer only leave a debug log."""
+    try:
+        from orchestrator import provenance
+
+        conversation = provenance.resolve_parent().get("session_id") or ""
+        if not conversation:
+            log.debug("project declaration skipped: not in a canopy-web turn")
+            return "skipped:no-conversation"
+        handle = _project_handle(client, project_ref)
+        if not handle:
+            log.debug("project declaration skipped: no handle for %r", project_ref)
+            return "skipped:no-handle"
+        client.declare_session_project(conversation, handle, tier)
+        return "declared"
+    except Exception as e:  # noqa: BLE001 — never fail a close-out over this
+        log.debug("project declaration failed: %s", e)
+        return f"failed:{type(e).__name__}"
 
 
 @agent.command("skills")

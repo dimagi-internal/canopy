@@ -38,6 +38,7 @@ from __future__ import annotations
 import datetime as _dt
 import glob
 import json
+import logging
 import os
 import re
 import subprocess
@@ -47,6 +48,8 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 from orchestrator import turn_synthesis
+
+log = logging.getLogger(__name__)
 
 #: canopy-web reader: ``(method, path, body) -> dict``. Injected so tests run offline.
 Caller = Callable[..., dict]
@@ -68,7 +71,9 @@ class ProjectSpec:
     (title / task key / branch / cwd). ``include_sessions`` /
     ``adjacent_sessions`` / ``exclude_sessions`` persist the agent's calls on candidates so a re-run is
     deterministic; they take canopy session ids, local transcript stems, or
-    conversation ids.
+    conversation ids. ``project_handle`` is the project's canopy-web handle
+    (``supply``, or ``<workspace>/<handle>``): with it, ``select`` reads the
+    project's linked sessions from canopy-web instead of re-deriving them.
     """
 
     name: str
@@ -89,6 +94,7 @@ class ProjectSpec:
     adjacent_sessions: list[str] = field(default_factory=list)
     exclude_sessions: list[str] = field(default_factory=list)
     workspaces: list[str] = field(default_factory=list)
+    project_handle: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "ProjectSpec":
@@ -246,6 +252,44 @@ def human_inputs(call: Caller, session_id: str) -> tuple[list[dict], str]:
         after = page.get("next_cursor")
         if after in (None, ""):
             return out, source
+
+
+def linked_sessions(spec: ProjectSpec, call: Caller, *, limit: int = 500) -> Optional[dict[str, dict]]:
+    """The sessions canopy-web has tied to the project (``core`` / ``adjacent``), keyed by
+    canopy session id: ``{session_id, title, workspace, tier, how, confidence, started_at}``.
+
+    ``GET /api/brain/workspaces/{ws}/projects/{handle}/sessions/?tiers=core,adjacent`` answers
+    only the sessions the caller may read. None means "use the local signals for the whole
+    selection": no ``project_handle`` (or no workspace) in the spec, the route missing on an
+    older canopy-web (404/405/501), the project unknown there, no answer at all, or no link
+    yet (an empty list is treated the same, so a project the links have not reached keeps
+    today's selection). Never raises."""
+    raw = (spec.project_handle or "").strip().lower()
+    ws, _, handle = raw.rpartition("/")
+    workspaces = [ws] if ws else [w for w in spec.workspaces if w]
+    if not handle or not workspaces:
+        return None
+    out: dict[str, dict] = {}
+    for w in workspaces:
+        path = (f"/api/brain/workspaces/{urllib.parse.quote(w, safe='')}/projects/"
+                f"{urllib.parse.quote(handle, safe='')}/sessions/?"
+                + urllib.parse.urlencode({"tiers": "core,adjacent", "limit": str(limit)}))
+        try:
+            rows = call("GET", path)
+        except Exception as e:  # noqa: BLE001 — unavailable means local selection, never a failure
+            log.debug("project links unavailable from %s: %s", path, e)
+            continue
+        for r in rows if isinstance(rows, list) else []:
+            sid = str((r or {}).get("session_id") or "")
+            if sid and r.get("tier") in ("core", "adjacent"):
+                out.setdefault(sid, dict(r, session_id=sid))
+    return out or None
+
+
+def _link_reasons(link: dict) -> list[str]:
+    conf = link.get("confidence")
+    extra = f", confidence {float(conf):.2f}" if isinstance(conf, (int, float)) else ""
+    return [f"linked on canopy-web ({link.get('how') or 'unknown'}{extra})"]
 
 
 # ─────────────────────────────────────────────────────── project PR index ──
@@ -544,6 +588,8 @@ class Conversation:
     canopy_input_source: str = ""
     merged_session: bool = False
     overridden: str = ""
+    link_how: str = ""           # how canopy-web tied it (dispatched|signals|judged|declared); "" = local signals
+    link_confidence: Optional[float] = None
 
 
 def _weak_hits(spec: ProjectSpec, *texts: str) -> list[str]:
@@ -619,15 +665,23 @@ def _tier(owned: list[int], edits: int, mcp: int, excluded_edits: int, weak: lis
 
 def select(spec: ProjectSpec, *, call: Caller, prs: dict[int, dict], slug: str = "",
            users_root: str = "/Users", use_local: bool = True, local_only_scan: bool = False,
-           now: Optional[str] = None, fetch_inputs: bool = True) -> dict:
+           now: Optional[str] = None, fetch_inputs: bool = True, use_server: bool = True) -> dict:
     """Choose the project's conversations. Returns
     ``{spec, generated_at, until, prs, conversations: [...], coverage: {...}}``.
 
-    Canopy is the index. A canopy session whose activity shows project work —
+    canopy-web's project links come first: when the spec names ``project_handle``
+    and canopy-web answers with links, a walked canopy session is in iff it is
+    linked, and its tier (with ``how`` / ``confidence``) is the stored one — the
+    local ``classify()`` signals are not re-derived for it. A merged session split
+    back into conversations gives each piece the session's stored tier. Local
+    classification remains for transcripts canopy-web never saw (``local_only_scan``)
+    and, as today, for the whole selection when the links are unavailable.
+
+    Without links: a canopy session whose activity shows project work —
     or that merely names the project — has its local transcripts (if any)
     looked up; when canopy merged several conversations into it, or holds fewer
     human inputs than the transcripts do, the local transcripts are split out
-    and each re-scored on its own."""
+    and each re-scored on its own. Spec overrides apply on both paths."""
     until = spec.until or now or _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sessions = walk_sessions(call, since=spec.since, until=until)
     heads = branch_index(pr.get("head", "") for pr in prs.values())
@@ -636,21 +690,32 @@ def select(spec: ProjectSpec, *, call: Caller, prs: dict[int, dict], slug: str =
     until_dt = _parse_ts(until)
     convs: list[Conversation] = []
     seen_transcripts: set[str] = set()
+    links = linked_sessions(spec, call) if use_server else None
     coverage = {"canopy_sessions_walked": len(sessions), "split_sessions": [],
-                "local_short_sessions": [], "tail_only_sessions": []}
+                "local_short_sessions": [], "tail_only_sessions": [],
+                "selection_source": "canopy-web" if links else "local",
+                "server_linked": len(links or {}), "server_linked_not_walked": []}
+    if links:
+        walked = {s["id"] for s in sessions}
+        coverage["server_linked_not_walked"] = sorted(i for i in links if i not in walked)
 
     picked = []
     for s in sessions:
         sig = _canopy_signals(s, spec, prs, slug)
         weak = _weak_hits(spec, s.get("title", ""), s.get("session_key", ""),
                           " ".join(sig["cwds"]), " ".join(sig["branches"]))
-        strong = _strong(sig["owned"], sig["edits"], sig["mcp"], spec)
         forced = _override(spec, s["id"])
+        if links is not None:
+            if s["id"] in links or forced:
+                picked.append((s, sig, weak))
+            continue
+        strong = _strong(sig["owned"], sig["edits"], sig["mcp"], spec)
         if strong or weak or sig["excluded_edits"] or forced:
             picked.append((s, sig, weak))
     claims = _claim_transcripts(picked, users_root) if use_local else {}
 
     for s, sig, weak in picked:
+        link = (links or {}).get(s["id"])
         created = _parse_ts(s.get("created_at"))
         straddles = bool(created and since_dt and created < since_dt)
         scans = []
@@ -692,7 +757,10 @@ def select(spec: ProjectSpec, *, call: Caller, prs: dict[int, dict], slug: str =
                 seen_transcripts.add(sc.path)
             c.owned_prs, c.edits, c.mcp_calls = owned, edits, mcp
             c.branches = sig["branches"]
-            c.tier, c.reasons = _tier(owned, edits, mcp, sig["excluded_edits"], weak, spec, prs)
+            if link:
+                _apply_link(c, link)
+            else:
+                c.tier, c.reasons = _tier(owned, edits, mcp, sig["excluded_edits"], weak, spec, prs)
             _apply_override(c, spec)
             if c.tier:
                 convs.append(c)
@@ -700,8 +768,17 @@ def select(spec: ProjectSpec, *, call: Caller, prs: dict[int, dict], slug: str =
         coverage["split_sessions" if merged else "local_short_sessions"].append(s["id"])
         for sc in scans:
             seen_transcripts.add(sc.path)
-            convs.append(_conv_from_scan(sc, spec, head_to_pr, prs, source="local", **base))
+            convs.append(_conv_from_scan(sc, spec, head_to_pr, prs, source="local", link=link,
+                                         **base))
     if local_only_scan and use_local:
+        if links is not None:
+            # A transcript of a canopy session canopy-web saw and did NOT link is not
+            # "never seen": keep it out of the local-only rescue.
+            chosen = {s["id"] for s, _sig, _w in picked}
+            rest = [(s, _canopy_signals(s, spec, prs, slug), []) for s in sessions
+                    if s["id"] not in chosen]
+            for fs in _claim_transcripts(rest, users_root).values():
+                seen_transcripts.update(str(f) for f in fs)
         convs.extend(_local_only(spec, head_to_pr, prs, heads, seen_transcripts, users_root,
                                  since_dt, until_dt))
     convs = [c for c in convs if c.tier]
@@ -770,8 +847,17 @@ def _owned_by_mentions(sc: LocalScan, head_to_pr: dict[str, int], spec: ProjectS
             if n >= spec.branch_mentions_min and b in head_to_pr}
 
 
+def _apply_link(c: Conversation, link: dict) -> None:
+    """The stored canopy-web link is the classification: tier, how, confidence."""
+    c.tier, c.reasons = str(link.get("tier") or ""), _link_reasons(link)
+    c.link_how = str(link.get("how") or "")
+    conf = link.get("confidence")
+    c.link_confidence = float(conf) if isinstance(conf, (int, float)) else None
+
+
 def _conv_from_scan(sc: LocalScan, spec: ProjectSpec, head_to_pr: dict[str, int],
-                    prs: dict[int, dict], *, source: str, **base) -> Conversation:
+                    prs: dict[int, dict], *, source: str, link: Optional[dict] = None,
+                    **base) -> Conversation:
     owned = sorted(_owned_by_mentions(sc, head_to_pr, spec))
     # Per-transcript name signal: the worktree/branch of THIS conversation, not
     # the merged canopy record's title (which names every conversation in it).
@@ -787,6 +873,8 @@ def _conv_from_scan(sc: LocalScan, spec: ProjectSpec, head_to_pr: dict[str, int]
     since_dt = _parse_ts(spec.since)
     if st and since_dt and st < since_dt:
         c.tier, c.reasons = "excluded", [f"starts before {spec.since[:10]}"]
+    elif link:
+        _apply_link(c, link)
     else:
         c.tier, c.reasons = _tier(owned, sc.edits, sc.mcp_calls, sc.excluded_edits, weak, spec,
                                   prs)
