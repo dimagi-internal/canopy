@@ -154,3 +154,12 @@ def test_the_hook_is_registered_for_the_shell_tools():
     assert all(re.fullmatch(r"[A-Za-z]+", t) for t in entry["matcher"].split("|"))
     [hook] = entry["hooks"]
     assert "python.sh" in hook["command"] and "--guard" not in hook["command"]
+
+
+def test_an_exponent_bomb_in_arithmetic_returns_at_once():
+    """`$((9**9**9**9))` must not hang the hook computing it (the guard runs on every call)."""
+    import time
+    start = time.monotonic()
+    g.decide("Bash", _bash("sleep $((9**9**9**9))"), env={})
+    g.decide("Bash", _bash("sleep $((" + "9*" * 200 + "9))"), env={})
+    assert time.monotonic() - start < 2

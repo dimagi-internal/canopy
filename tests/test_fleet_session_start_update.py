@@ -627,6 +627,7 @@ def _cli_fixture(tmp_path, monkeypatch, *, plugin="0.2.900", cli="0.2.800", rece
 
     monkeypatch.setattr(flu, "run", fake_run)
     monkeypatch.setattr(flu, "_which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(flu, "off_release_branch", lambda clone, head="": "")
     monkeypatch.delenv("CANOPY_CLI_REFRESH", raising=False)
     return str(clone), calls
 
@@ -635,6 +636,13 @@ def test_refresh_cli_reinstalls_a_cli_behind_the_plugin(tmp_path, monkeypatch):
     clone, calls = _cli_fixture(tmp_path, monkeypatch)
     assert flu.refresh_cli(clone) == "refreshed 0.2.800→0.2.900"
     assert calls[-1] == ["/bin/uv", "tool", "install", "--reinstall", "--force", clone]
+
+
+def test_refresh_cli_never_reinstalls_from_a_clone_whose_head_has_not_landed(tmp_path, monkeypatch):
+    clone, calls = _cli_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(flu, "off_release_branch", lambda clone, head="": "HEAD abc is not on origin/main")
+    assert flu.refresh_cli(clone).startswith("not reinstalling: HEAD abc is not on origin/main")
+    assert not any(c[:2] == ["/bin/uv", "tool"] and c[2] in ("install", "upgrade") for c in calls)
 
 
 def test_refresh_cli_upgrades_in_place_when_installed_from_the_clone(tmp_path, monkeypatch):
@@ -732,6 +740,8 @@ def _refresh_box(tmp_path, monkeypatch, *, name="ace", mkt="ace"):
     (clone / "skills" / "s.md").write_text("new")
     _git(clone, "add", "-A")
     _git(clone, "commit", "-m", "new")
+    # What the runner's claim-time pull leaves: HEAD has landed on origin/main.
+    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
     (clone / "node_modules" / "dep").mkdir(parents=True)
     (clone / "node_modules" / "dep" / "index.js").write_text("x")
 
@@ -782,6 +792,22 @@ def test_refresh_never_moves_a_plugin_installed_ahead_of_its_clone_backwards(tmp
     monkeypatch.setattr(flu, "build_and_swap", lambda *a: pytest.fail("never move backwards"))
 
     assert flu.refresh_plugin("ace", str(clone))["status"] == "up-to-date"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_refuses_a_clone_whose_head_has_not_landed_on_main(tmp_path, monkeypatch):
+    """A clone left on a PR branch must never put that branch's hooks into the plugin cache."""
+    clone, _old, old_sha = _refresh_box(tmp_path, monkeypatch)
+    _git(clone, "checkout", "-q", "-b", "pr-branch")
+    (clone / "skills" / "s.md").write_text("unreviewed")
+    (clone / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "ace", "version": "1.0.2"}))
+    _git(clone, "commit", "-qam", "pr")
+    monkeypatch.setattr(flu, "build_and_swap", lambda *a: pytest.fail("built an unlanded commit"))
+
+    result = flu.refresh_plugin("ace", str(clone))
+
+    assert result["status"] == "error" and "not on origin/main" in result["error"], result
+    assert _entry()["gitCommitSha"] == old_sha
 
 
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")

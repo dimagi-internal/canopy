@@ -277,3 +277,38 @@ def test_ssh_tar_extraction_refuses_path_traversal(tmp_path, monkeypatch):
     assert pulled == ["fine.md"]
     assert not (tmp_path / "escaped.md").exists()
     assert not (out.parent.parent / "escaped.md").exists()
+
+
+# ── a compromised droplet's symlinks never carry the operator's files into the repo ──────
+
+from orchestrator import openclaw_harvest as oh  # noqa: E402
+
+def test_rsync_pulls_symlinks_as_nothing(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(oh.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(oh.subprocess, "run", lambda cmd, **k: seen.setdefault("cmd", cmd) and
+                        type("R", (), {"returncode": 0, "stderr": ""})())
+    oh.snapshot_via_ssh("root@host", tmp_path / "out")
+    assert "--no-links" in seen["cmd"]
+
+
+def test_carried_memory_and_skills_skip_links(tmp_path):
+    secret = tmp_path / "operator-secret"
+    secret.write_text("PRIVATE KEY")
+    snap = tmp_path / "snap"
+    (snap / "memory").mkdir(parents=True)
+    (snap / "memory" / "real.md").write_text("note")
+    (snap / "memory" / "planted.md").symlink_to(secret)
+    skill = snap / "skills" / "x"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: x\n---\n")
+    (skill / "creds").symlink_to(secret)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    carried = oh._carry_workspace(snap, repo)
+    copied = oh._copy_skill_dir({"path": str(skill / "SKILL.md"), "key": "x"}, repo)
+
+    assert carried["memory"] == ["real.md"] and not (repo / "memory" / "planted.md").exists()
+    assert copied == "x" and (repo / "skills" / "x" / "SKILL.md").exists()
+    assert not (repo / "skills" / "x" / "creds").exists()
