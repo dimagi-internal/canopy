@@ -594,6 +594,10 @@ Check this BEFORE writing the body, then give them the content as your turn summ
 there is **another recipient** (reply-all, a cc'd teammate, an external counterpart); the content
 must **live on the thread** as the durable record; or the human is **not present** (an
 async/cron-triggered turn). The test is the recipient list and the channel, never the content.
+**An answer given in chat disposes of the thread, so mark it read in the same turn** (`canopy email
+mark-read --repo . <thread_id>`). No reply on the thread leaves it unread, and the Step 2.0 sweep
+then reports it as NEEDS ATTENTION "[never replied]". A later unattended turn cannot see the chat
+(a laptop session keeps no transcript on canopy-web), so it answers the thread cold, days late.
 
 ### Step 2.9 — Choosing the board work: leverage, not list order
 When the inbound is drained and the board is what's left, "first actionable task" is not a choice.
