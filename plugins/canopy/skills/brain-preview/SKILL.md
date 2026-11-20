@@ -68,7 +68,8 @@ uv run --project "$CANOPY_ROOT" canopy brain preview --since 24h --out "$OUT" --
 
 `--since` takes `24h` / `7d` / an ISO date-time (`--until` the same; default now, frozen for the
 walk); `--view full` is the default and the widest (typed lines, replies, tool calls and results,
-secret-scrubbed). It writes `$OUT/<session id>.json` per session and `$OUT/index.json`, and prints
+secret-scrubbed); narrower views are `conversation` (user + assistant text), `userinput` (only what
+people typed) and `opening` (the first few typed lines). The learner step wants `full`. It writes `$OUT/<session id>.json` per session and `$OUT/index.json`, and prints
 the counts. A 404 means this canopy-web has no preview yet — say so and stop. Run
 `canopy act-as stop` as soon as the preview is pulled: everything after this is local.
 

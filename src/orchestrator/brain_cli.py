@@ -7,7 +7,7 @@ had agreed), and what would the learner recommend? canopy-web answers the first 
 command pages that endpoint and lays the answer out on disk for the ``brain-preview`` skill, which
 runs the learner step locally and renders one HTML report.
 
-    canopy brain preview [--since 24h] [--until ISO] [--view full|conversation|typed|opening]
+    canopy brain preview [--since 24h] [--until ISO] [--view full|conversation|userinput|opening]
                          [--out DIR] [--step-up] [--limit N] [--json-output]
     canopy brain report DIR        # DIR/report.html from the preview + the learner's notes
 
@@ -40,7 +40,9 @@ import click
 from orchestrator import canopy_web
 
 PREVIEW_PATH = "/api/brain/preview"
-VIEWS = ("full", "conversation", "typed", "opening")
+#: canopy-web's transcript views, widest first: everything incl. tool calls; user + assistant
+#: text; only what people typed (`userinput`); the first few typed lines.
+VIEWS = ("full", "conversation", "userinput", "opening")
 TIERS = ("core", "adjacent", "candidate")
 DEFAULT_LIMIT = 10
 MAX_PAGES = 1000
