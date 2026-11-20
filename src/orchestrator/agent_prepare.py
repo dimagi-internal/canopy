@@ -62,6 +62,7 @@ from orchestrator.agent_bootstrap import (
     _write_private,
 )
 from orchestrator.agent_doctor import declared_required_plugins
+from orchestrator.agent_web import normalize_repo_url
 from orchestrator.agent_email import gog_client_credentials
 GIT_HELPER = ('!f() { test "$1" = get || exit 0; [ -n "$GH_TOKEN" ] || exit 0; '
               'echo username=x-access-token; echo "password=$GH_TOKEN"; }; f')
@@ -339,7 +340,8 @@ class RunnerPreparer(Bootstrapper):
                 r = self._git(["-C", str(dest), "pull", "--ff-only"], github_token)
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                r = self._git(["clone", "--depth", "1", url, str(dest)], github_token)
+                # `--`: a url or dest that starts with `-` is an argument, never an option.
+                r = self._git(["clone", "--depth", "1", "--", url, str(dest)], github_token)
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
         return "" if r.returncode == 0 else _first_line(r.stderr or r.stdout, 300)
@@ -358,8 +360,14 @@ class RunnerPreparer(Bootstrapper):
         if self.dry_run:
             rep.notes.append(f"repo: would {'pull' if (dest / '.git').is_dir() else 'clone'} {url}")
             return dest if (dest / ".git").is_dir() else None
-        err = self.clone_or_pull(url.removesuffix(".git") + ".git", dest,
-                                 self.creds(slug).github_token)
+        # canopy-web's record is data, not a git argument: only a GitHub repo, as https.
+        # (`ext::`, `file://`, `--upload-pack=…` and the like are refused here.)
+        safe = normalize_repo_url(url)
+        if not safe:
+            rep.fail(f"repo: canopy-web's repository for {slug} is not a GitHub repo "
+                     f"({url[:120]!r}) — set it on the agent's settings")
+            return None
+        err = self.clone_or_pull(safe + ".git", dest, self.creds(slug).github_token)
         if err and (dest / ".git").is_dir():
             # A clone that could not be UPDATED is still a clone — provision it as it is,
             # the way a turn runs in a clone whose pull failed.
