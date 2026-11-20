@@ -31,6 +31,9 @@ on:
       - 'video-engine/vitest.config.ts'
       - '.github/workflows/video-engine-tests.yml'
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

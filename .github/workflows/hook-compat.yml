@@ -16,6 +16,9 @@ name: Hook Python compatibility
 # required check never reports on unrelated PRs and blocks them. It takes seconds.
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   compile:
     runs-on: ubuntu-24.04  # Ubuntu 26.04 has no Python 3.9, and macOS system Python 3.9 is what this guards
