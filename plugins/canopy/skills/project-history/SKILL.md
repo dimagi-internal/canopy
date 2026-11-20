@@ -43,6 +43,7 @@ name_terms: [supply]                      # WEAK signal only
 artifact_terms: [supply, oes, sophie, rutf]
 agent_project: hal/P5                     # the board project artifacts are stamped with
 workspaces: [connect, dimagi]             # canopy-web workspaces to list artifacts from
+project_handle: supply                    # its canopy-web handle (or connect/supply): read its linked sessions
 ```
 
 Get the paths from `git log` of the repo, not from memory. If the person told you
@@ -55,7 +56,17 @@ encode it as `exclude_paths` / `since`, and say it in `scope_notes` (step 4).
 canopy project-history select --spec supply.yaml -o selection.json
 ```
 
-The rule it applies, and why: a session is **in** when it *did* project work —
+**canopy-web's project links come first.** With `project_handle` set, `select` asks
+canopy-web which sessions are tied to the project (`core`, `adjacent`; only ones you may
+read) and takes each stored tier, with how it was tied (`dispatched`, `signals`, `judged`,
+`declared`) and its confidence, as the classification: those land in `link_how` /
+`link_confidence`, and `coverage.selection_source` reads `canopy-web`. A walked session
+canopy-web did not link is out. The local rule below still classifies local transcripts
+canopy-web never saw (`--local-scan`), and the WHOLE selection when canopy-web has no links
+for the project or no such route (`selection_source: local`). `--no-server` forces the
+local rule. Your `include/adjacent/exclude_sessions` calls win on both paths.
+
+The local rule, and why: a session is **in** when it *did* project work —
 owns a project PR (created it, or names its head branch ≥3 times), edits project
 paths, or calls the project's MCP tools (≥3). Keywords alone were noise: "supply"
 matched 842 sessions, mostly briefings. A cross-cutting PR (most files outside
