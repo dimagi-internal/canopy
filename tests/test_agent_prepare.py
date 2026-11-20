@@ -643,3 +643,20 @@ def test_with_no_token_from_resolve_git_uses_the_turns_gh_token(tmp_path, monkey
     assert git and all(c[2] == "ghp_TURN" for c in git)
     assert all(c[2] is None for c in box.calls if c[0][0] != "git")
     assert ap.TURN_GITHUB_TOKEN_ENV not in os.environ
+
+
+def test_a_repo_record_that_is_not_a_github_repo_is_never_handed_to_git(tmp_path):
+    for bad in ("ext::sh -c touch% /tmp/pwned", "--upload-pack=touch /tmp/pwned",
+                "file:///etc", "https://evil.example/o/r"):
+        box = Box(tmp_path / "b")
+        rep = _prep(tmp_path / "b", box, creds=_creds(repo_url=bad)).prepare("ace")
+        assert not [c for c in box.ran(["git"]) if "clone" in c[0]], bad
+        assert not rep.ok and any("not a GitHub repo" in n for n in rep.notes), bad
+
+
+def test_the_clone_ends_option_parsing_before_the_url(tmp_path):
+    box = Box(tmp_path)
+    _prep(tmp_path, box, creds=_creds(repo_url="dimagi-internal/ace")).prepare("ace")
+    (clone,) = [c for c in box.ran(["git"]) if "clone" in c[0]]
+    argv = clone[0]
+    assert argv[argv.index("--") + 1] == "https://github.com/dimagi-internal/ace.git"

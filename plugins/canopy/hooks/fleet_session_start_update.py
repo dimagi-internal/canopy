@@ -421,6 +421,12 @@ def _runtime_present(cache_dir: Path, manifest: dict) -> bool:
     return all((dest / str(p).rstrip("/").split("/")[-1]).exists() for p in manifest["paths"])
 
 
+def _relative_inside(rel: str) -> bool:
+    """A manifest path is plugin data: relative, with no `..`, so it stays under its root."""
+    p = Path(rel)
+    return bool(rel) and not p.is_absolute() and ".." not in p.parts and not rel.startswith("~")
+
+
 def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
     """Mirror manifest paths from the clone root into <cache>/<dest>/.
 
@@ -429,7 +435,13 @@ def sync_runtime(clone: str, manifest: dict, cache_dir: Path) -> str:
     installed SHA. `.venv`/`uv.lock` in dest are preserved (uv materializes
     them on first use; a same-version resync must not thrash them).
     """
-    dest = cache_dir / str(manifest.get("dest") or "runtime")
+    dest_rel = str(manifest.get("dest") or "runtime")
+    if not _relative_inside(dest_rel):
+        return f"runtime dest must be a relative path inside the cache: {dest_rel!r}"
+    for rel in manifest["paths"]:
+        if not _relative_inside(str(rel)):
+            return f"runtime path must be relative and inside the clone: {rel!r}"
+    dest = cache_dir / dest_rel
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

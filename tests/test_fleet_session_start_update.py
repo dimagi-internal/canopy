@@ -855,3 +855,21 @@ def test_refresh_never_installs_a_clone_the_plugin_was_not_installed_from(tmp_pa
 
     assert result["status"] == "error" and "not installed from this clone" in result["error"]
     assert _entry()["gitCommitSha"] == old_sha
+
+
+@pytest.mark.parametrize("manifest", [
+    {"dest": "/tmp/elsewhere", "paths": ["src"]},
+    {"dest": "../../outside", "paths": ["src"]},
+    {"dest": "runtime", "paths": ["../../.ssh"]},
+    {"dest": "runtime", "paths": ["/etc/passwd"]},
+    {"dest": "~/x", "paths": ["src"]},
+])
+def test_sync_runtime_refuses_a_manifest_path_that_leaves_its_root(tmp_path, manifest):
+    clone = tmp_path / "clone"
+    (clone / "src").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    err = flu.sync_runtime(str(clone), manifest, cache)
+    assert "must be" in err
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["cache", "clone"]
+    assert list(cache.iterdir()) == []
