@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 .venv/
+# Local env files hold real credentials (agent .env files, vault exports); never commit one.
+.env
+.env.*
+!.env.example
 *.egg-info/
 dist/
 build/

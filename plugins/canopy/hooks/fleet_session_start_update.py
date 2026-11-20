@@ -226,6 +226,23 @@ def _is_ancestor(clone: str, older: str, newer: str) -> bool:
     return rc == 0
 
 
+def off_release_branch(clone: str, head: str = "") -> str:
+    """"" when `clone`'s HEAD (or `head`) is on origin/<default branch>, else why not.
+
+    `--refresh` and the CLI reinstall install the clone as it stands, without fetching or
+    moving it. A clone left on a PR branch (`gh pr checkout`, a hand edit) would otherwise put
+    unreviewed hooks into the plugin cache, where every later session on the box runs them. So
+    both install only what has landed on the remote default branch. No such ref counts as off."""
+    if not head:
+        rc, head, err = run(["git", "rev-parse", "HEAD"], 10, cwd=clone)
+        if rc != 0 or not head:
+            return f"rev-parse HEAD: {err or rc}"
+    ref = f"origin/{_default_branch(clone)}"
+    if not _is_ancestor(clone, head, ref):
+        return f"HEAD {head[:8]} is not on {ref}; refusing to install a commit that has not landed"
+    return ""
+
+
 def target_ref(clone: str, branch: str) -> str:
     """The ref this machine should run: the repo's fleet-stable tag, else origin/<branch>.
 
@@ -892,6 +909,9 @@ def refresh_cli(clone: str) -> str:
     have = _version_tuple(out) if rc == 0 else ()
     if have and have >= want:
         return "current"
+    why = off_release_branch(clone)
+    if why:
+        return f"not reinstalling: {why}"
     uv = _which("uv")
     if not uv:
         return "behind, and no uv to reinstall it"
@@ -1035,6 +1055,10 @@ def refresh_plugin(name: str, clone: str, *, wait: float = REFRESH_WAIT) -> dict
     rc, head, err = run(["git", "rev-parse", "HEAD"], 10, cwd=clone)
     if rc != 0 or not head:
         result["error"] = f"rev-parse HEAD: {err or rc}"
+        return result
+    why = off_release_branch(clone, head)
+    if why:
+        result["error"] = why
         return result
 
     def installed() -> dict:

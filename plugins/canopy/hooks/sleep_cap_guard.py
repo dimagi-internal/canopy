@@ -63,7 +63,9 @@ INF = math.inf
 
 def _arith(m: "re.Match") -> str:
     expr = m.group(1)
-    if re.fullmatch(r"[\d\s+\-*/()]+", expr):
+    # Digits and + - * / only, never `**`: `$((9**9**9**9))` would hang this hook computing a
+    # number with billions of digits. A short cap keeps plain multiplication cheap too.
+    if len(expr) <= 64 and "**" not in expr and re.fullmatch(r"[\d\s+\-*/()]+", expr):
         try:
             return str(int(eval(expr, {"__builtins__": {}}, {})))  # digits + operators only
         except Exception:

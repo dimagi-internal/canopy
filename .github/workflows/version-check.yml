@@ -1,6 +1,9 @@
 name: Version sync check
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -40,7 +43,7 @@ jobs:
           echo "Versions match."
       - name: Set up uv
         if: github.ref != 'refs/heads/main'
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
           version: "latest"
       - name: Verify plugin changes are paired with a VERSION bump

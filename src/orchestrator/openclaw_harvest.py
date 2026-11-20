@@ -18,6 +18,7 @@ repo. The snapshot excludes them by default; the engine only ever reads workspac
 from __future__ import annotations
 
 import io
+import os
 import re
 import shutil
 import subprocess
@@ -124,7 +125,10 @@ def _snapshot_rsync(host: str, into: Path, openclaw_root: str) -> list[str]:
         excludes += ["--exclude", pat]
     # Pull the whole workspace dir (text + skills/ + memory/), minus secrets.
     src = f"{host}:{openclaw_root}/workspace/"
-    cmd = ["rsync", "-az", "--prune-empty-dirs", *excludes, src, str(into) + "/"]
+    # --no-links: a symlink on the droplet (memory/x.md -> /Users/<op>/.ssh/id_ed25519) would
+    # otherwise land here as a link, and every later copy into the new repo follows it, carrying
+    # the operator's own files into a commit. The ssh+tar path skips links the same way.
+    cmd = ["rsync", "-az", "--no-links", "--prune-empty-dirs", *excludes, src, str(into) + "/"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -298,7 +302,7 @@ def _carry_workspace(snapshot_dir: Path, repo: Path) -> dict:
         mem_dest = repo / "memory"
         mem_dest.mkdir(parents=True, exist_ok=True)
         for p in sorted(mem_src.rglob("*")):
-            if not p.is_file():
+            if not p.is_file() or not _inside(p, d):
                 continue
             rel = p.relative_to(mem_src)
             target = mem_dest / rel
@@ -311,7 +315,8 @@ def _carry_workspace(snapshot_dir: Path, repo: Path) -> dict:
     # Reference text (TOOLS/HEARTBEAT/BOOTSTRAP/MEMORY.md) lands under openclaw/ rather than the
     # repo root: it is the OpenClaw's own scaffolding, useful to read and wrong to present as if
     # a canopy agent authored it.
-    ref = [fn for fn in WORKSPACE_TEXT if fn not in PERSONA_TEXT and (d / fn).is_file()]
+    ref = [fn for fn in WORKSPACE_TEXT
+           if fn not in PERSONA_TEXT and (d / fn).is_file() and _inside(d / fn, d)]
     if ref:
         ref_dir = repo / "openclaw"
         ref_dir.mkdir(parents=True, exist_ok=True)
@@ -390,6 +395,16 @@ def port_new_skills(inv: dict, repo: Path) -> list[str]:
 _SKILL_IGNORE = ("node_modules", ".git", "__pycache__", "*.pyc", ".DS_Store", "*.skill")
 
 
+def _inside(path: Path, root: Path) -> bool:
+    """A real file under `root`: not a link, and not resolving outside it."""
+    if path.is_symlink():
+        return False
+    try:
+        return Path(path).resolve().is_relative_to(Path(root).resolve())
+    except OSError:
+        return False
+
+
 def _copy_skill_dir(skill: dict, repo: Path) -> str | None:
     """Copy a harvested skill's WHOLE directory into repo/skills/<key>/. Never clobbers an
     existing skill dir (so factory skills + already-ported skills survive). Returns the key if
@@ -398,5 +413,11 @@ def _copy_skill_dir(skill: dict, repo: Path) -> str | None:
     dest_dir = repo / "skills" / skill["key"]
     if dest_dir.exists():
         return None
-    shutil.copytree(src_dir, dest_dir, ignore=shutil.ignore_patterns(*_SKILL_IGNORE))
+    patterns = shutil.ignore_patterns(*_SKILL_IGNORE)
+
+    def ignore(directory, names):     # the patterns, plus every link: never copy what one names
+        return set(patterns(directory, names)) | {
+            n for n in names if os.path.islink(os.path.join(directory, n))}
+
+    shutil.copytree(src_dir, dest_dir, ignore=ignore)
     return skill["key"]

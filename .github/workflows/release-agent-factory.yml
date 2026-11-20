@@ -51,7 +51,7 @@ jobs:
         with:
           fetch-depth: 0          # tags, so the already-released check is real
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Resolve the version this commit declares
         id: v
@@ -95,7 +95,7 @@ jobs:
       # cannot do it itself.
       - name: Publish to PyPI
         if: steps.v.outputs.already == '0'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           packages-dir: packages/canopy_agent_factory/dist
 
