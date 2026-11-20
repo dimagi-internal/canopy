@@ -351,3 +351,50 @@ def artifact_project_fields(cwd: Optional[str] = None) -> dict:
 def with_provenance(headers: Optional[dict], client: str = DEFAULT_CLIENT) -> dict:
     """`headers` plus provenance; the caller's own keys win (e.g. a custom UA)."""
     return {**provenance_headers(client), **(headers or {})}
+
+
+# ── a bearer never follows a redirect off its origin ──────────────────────────────────────
+#
+# Every canopy-web call (and the uploaders beside it) sends `Authorization: Bearer <PAT>` through
+# urllib. CPython's redirect handler copies every header except Content-Length/Type onto the
+# redirected request, whatever host or scheme it points at, so a 30x to another host (a CDN, a
+# misconfigured proxy, http://) would hand that host the token. Same-origin redirects still work;
+# anything else loses its credentials. Installed as the process's default opener when this module
+# is imported, which every bearer sender does, so plain `urllib.request.urlopen` (and the tests'
+# monkeypatches of it) keep working.
+
+import urllib.request as _urlreq  # noqa: E402
+from urllib.parse import urlsplit as _urlsplit  # noqa: E402
+
+_CREDENTIAL_HEADERS = ("Authorization", "Proxy-authorization", "Cookie")
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> tuple:
+    p = _urlsplit(url)
+    scheme = (p.scheme or "").lower()
+    try:
+        port = p.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        port = None
+    return scheme, (p.hostname or "").lower(), port
+
+
+class AuthSafeRedirectHandler(_urlreq.HTTPRedirectHandler):
+    """Follow redirects, but drop credentials on any hop that leaves the request's origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and _origin(req.full_url) != _origin(new.full_url):
+            for name in _CREDENTIAL_HEADERS:
+                new.remove_header(name)
+        return new
+
+
+def install_auth_safe_redirects() -> None:
+    """Make AuthSafeRedirectHandler the default opener, unless something installed its own."""
+    if getattr(_urlreq, "_opener", None) is None:
+        _urlreq.install_opener(_urlreq.build_opener(AuthSafeRedirectHandler))
+
+
+install_auth_safe_redirects()

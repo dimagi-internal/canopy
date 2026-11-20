@@ -34,6 +34,30 @@ def save_label_data(state_dir: Path, session_id: str, data: dict) -> None:
     )
 
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def request_allowed(headers, port) -> bool:
+    """Is this request from the browser UI this server serves, and nothing else?
+
+    The API hands out whole session transcripts (secrets and all) and starts `claude` reviews,
+    so any web page the operator has open must not reach it. Three checks:
+      - Host must be this loopback port: a DNS-rebinding page (evil.example resolving to
+        127.0.0.1) sends its own name as Host.
+      - Origin, when the browser sends one, must be this same origin.
+      - Sec-Fetch-Site, when sent, must be same-origin or none (typed into the address bar).
+    No CORS header is ever sent, so a cross-origin page cannot read a response either."""
+    host = (headers.get("Host") or "").strip().lower()
+    allowed = {f"{h}:{port}" for h in _LOOPBACK_HOSTS} if port else set()
+    if host not in allowed:
+        return False
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin and origin not in {f"http://{h}" for h in allowed}:
+        return False
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    return site in ("", "same-origin", "none")
+
+
 def create_app(
     projects_dir: Path,
     state_dir: Path,
@@ -41,6 +65,13 @@ def create_app(
     """Create an HTTP request handler class with the given configuration."""
 
     class AppHandler(BaseHTTPRequestHandler):
+
+        def _refuse_foreign(self) -> bool:
+            """Answer 403 and return True unless the request comes from our own UI."""
+            if request_allowed(self.headers, self.server.server_address[1]):
+                return False
+            self.send_error(403, "cross-origin or foreign-host request refused")
+            return True
 
         def _get_transcripts(self):
             return get_transcripts(projects_dir, state_dir)
@@ -51,7 +82,6 @@ def create_app(
         def _send_json(self, data, status=200):
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(data, default=str).encode())
 
@@ -65,6 +95,8 @@ def create_app(
             return urlparse(self.path).path.rstrip("/")
 
         def do_GET(self):
+            if self._refuse_foreign():
+                return
             path = self._parse_path()
 
             if path == "" or path == "/":
@@ -78,6 +110,14 @@ def create_app(
                 self.send_error(404)
 
         def do_POST(self):
+            if self._refuse_foreign():
+                return
+            # A cross-site form or `fetch(..., {mode: "no-cors"})` can only send a "simple"
+            # content type; requiring JSON forces a preflight, which this server never grants.
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if int(self.headers.get("Content-Length") or 0) and ctype != "application/json":
+                self.send_error(415, "application/json required")
+                return
             path = self._parse_path()
 
             if path.startswith("/api/labels/"):
@@ -107,11 +147,8 @@ def create_app(
                 self.send_error(404)
 
         def do_OPTIONS(self):
-            self.send_response(200)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.end_headers()
+            # No CORS preflight is ever granted: the UI is same-origin and needs none.
+            self.send_error(403, "cross-origin requests are not served")
 
         def _serve_static(self):
             static_path = Path(__file__).parent / "static" / "index.html"

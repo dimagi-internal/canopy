@@ -200,8 +200,18 @@ p{color:#555;line-height:1.5}</style>
  * value. Creates parent directories as needed. mode 0o600.
  */
 export async function writeTokenFile(path: string, value: string): Promise<void> {
-  await fs.mkdir(dirname(path), { recursive: true });
-  await fs.writeFile(path, value + '\n', { mode: 0o600 });
+  await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  // `mode` on writeFile only applies when it CREATES the file, so a rotation over an older
+  // 0644 token would stay world-readable. Write a fresh 0600 temp file and rename it over.
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await fs.writeFile(tmp, value + '\n', { mode: 0o600, flag: 'wx' });
+    await fs.chmod(tmp, 0o600);
+    await fs.rename(tmp, path);
+  } catch (e) {
+    await fs.rm(tmp, { force: true });
+    throw e;
+  }
 }
 
 async function main(): Promise<number> {

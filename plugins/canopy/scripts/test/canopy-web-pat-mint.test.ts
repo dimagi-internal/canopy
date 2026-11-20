@@ -47,6 +47,14 @@ describe('writeTokenFile', () => {
     expect(content).not.toContain('old-token');
   });
 
+  it('tightens an older world-readable token file to 0600 on rotation', async () => {
+    if (process.platform === 'win32') return;
+    await writeFile(tokenPath, 'old-token\n', { mode: 0o644 });
+    await writeTokenFile(tokenPath, 'new-token');
+    expect((await stat(tokenPath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(tokenPath, 'utf8')).toBe('new-token\n');
+  });
+
   it('writes exactly one trailing newline', async () => {
     await writeTokenFile(tokenPath, 'token-nl');
     const content = await readFile(tokenPath, 'utf8');
