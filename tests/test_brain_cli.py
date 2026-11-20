@@ -292,3 +292,13 @@ def test_report_prefers_the_consolidated_list(person, tmp_path):
 def test_report_without_a_preview_says_so(tmp_path):
     r = CliRunner().invoke(brain_cli.brain_group, ["report", str(tmp_path)])
     assert r.exit_code != 0 and "no index.json" in r.output
+
+
+def test_view_userinput_is_sent_and_the_old_typed_name_is_refused(person, tmp_path):
+    r = run("--view", "userinput", "--out", str(tmp_path / "o"))
+    assert r.exit_code == 0, r.output
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(person.calls[0][1]).query))
+    assert q["view"] == "userinput"
+    assert brain_cli.VIEWS == ("full", "conversation", "userinput", "opening")
+    r = run("--view", "typed", "--out", str(tmp_path / "o2"))
+    assert r.exit_code != 0 and "typed" in r.output
