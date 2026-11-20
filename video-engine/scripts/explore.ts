@@ -185,6 +185,16 @@ async function serve(rootDir: string, port: number, program: string) {
       const url = new URL(req.url ?? "/", `http://localhost:${port}`);
       const method = (req.method ?? "GET").toUpperCase();
 
+      // /edit rewrites the program's YAML and starts renders, /feedback writes a file: only
+      // this explorer's own page may call them. A page elsewhere can POST here without a
+      // preflight (text/plain), and a DNS-rebinding page sends its own name as Host.
+      const host = (req.headers.host ?? "").toLowerCase();
+      const origin = req.headers.origin;
+      const ours = [`localhost:${port}`, `127.0.0.1:${port}`];
+      if (!ours.includes(host) || (origin && !ours.some((h) => origin === `http://${h}`))) {
+        res.writeHead(403); res.end("forbidden"); return;
+      }
+
       // /library.json — structured manifest for the drawer UI
       if (url.pathname === "/library.json") {
         const libData = await buildLibraryJson(rootDir, program);
@@ -283,7 +293,8 @@ async function serve(rootDir: string, port: number, program: string) {
       res.end(`error: ${(e as Error).message}`);
     }
   });
-  await new Promise<void>((resolve) => server.listen(port, resolve));
+  // Loopback only: this is a local editing tool with no auth, never a LAN service.
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
   return server;
 }
 

