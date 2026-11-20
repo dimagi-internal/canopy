@@ -46,7 +46,12 @@ _MAX_DEPTH = 12
 # Calls canopy-web does not serve, kept on purpose — each with its reason and its way
 # out. `routes` prints them, so canopy-web's check skips them rather than failing on a
 # route it already removed.
-ALLOWED_MISSING: dict = {}
+ALLOWED_MISSING: dict = {
+    ("GET", "/api/brain/preview"): (
+        "`canopy brain preview` (brain_cli.py) ships against the contract while canopy-web "
+        "is still building the route. Way out: refresh the "
+        "vendored schema once it merges; the stale-allowlist test then asks for this to go."),
+}
 
 _NOT_PATH_BUILDERS = frozenset({"quote", "quote_plus", "urlencode", "str", "int", "get", "dumps"})
 

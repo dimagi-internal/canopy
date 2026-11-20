@@ -41,7 +41,7 @@ FRAMEWORK = {
 HUBS = {"cli", "pipeline", "server"}
 PRODUCT = {
     "analyzer", "proposer", "reviewer", "briefing", "observations", "proposals",
-    "campaigns", "tracker", "labels", "patterns", "router", "digest", "harvest", "project_history",
+    "campaigns", "tracker", "labels", "patterns", "router", "digest", "harvest", "project_history", "brain_cli", "brain_report",
     "shareout", "openclaw_harvest",
     "issue_origin", "verify_findings", "corpus", "test_audit", "prompts",
 }
