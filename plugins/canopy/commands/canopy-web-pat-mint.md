@@ -65,11 +65,13 @@ CANOPY_WEB_API_URL=http://localhost:8000 npx --yes tsx "$SCRIPT"
    you're not already signed in) shows a one-click "Authorize CLI
    access" page identifying the label, callback host, and your
    account. Click **Authorize**.
-5. **canopy-web mints a PersonalToken** bound to your user, then
-   `302`-redirects to `<cb>?token=<raw>&state=<nonce>`.
-6. **Local listener** verifies the state nonce, extracts the token,
-   writes it to `~/.claude/canopy/workbench-token` (chmod 600),
-   responds with a "Token captured" page, and shuts down.
+5. **canopy-web** `302`-redirects to `<cb>?code=<one-time code>&state=<nonce>`.
+   The raw token is never in a URL, so it never lands in browser history.
+6. **Local listener** verifies the state nonce, trades the code (single
+   use, two minutes) at `${CANOPY_WEB_API_URL}/auth/cli/token/` for a
+   PersonalToken bound to your user, writes it to
+   `~/.claude/canopy/workbench-token` (chmod 600), responds with a
+   "Token captured" page, and shuts down.
 
 ## Output
 
