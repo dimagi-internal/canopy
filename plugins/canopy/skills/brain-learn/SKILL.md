@@ -29,14 +29,16 @@ canopy records against the sessions it came from. Nothing carries over to the ag
 Call `who_is_asking` with the `turn_id` the Turn Context at the top of the conversation gives. Expect `system`
 (canopy itself), with the person the run answers to as accountable. Its `brain_run` block is this run:
 
-- `run`, `learner`, `learner_name`, `class`, `purpose`, `entry`, `output_kinds`: what is learning, and the kinds
-  `brain_emit` accepts for it.
+- `version`: the context document's version (1). A field you do not know is additive; ignore it.
+- `run`, `learner`, `learner_name`, `purpose_class`, `purpose`, `entry`, `output_kinds`: what is learning, and the
+  kinds `brain_emit` accepts for it.
 - `subject_type`, `subject`, `scope`: what the run is about and the workspace whose subtree it reads.
 - `target`: `{id, kind (workspace | project), workspace, project, schedule_id}`. Write about the target only.
 - `accountable`: `{email, name}`, the person the run answers to. Your outbound work under §5 is on their behalf, under
   the agent's turn mode: anything that needs their approval on an ordinary turn needs it here.
 - `sessions_due` and `source_ids_due`: how many sources this run may still read, and their ids. Ids only; their words
   come through `brain_read`.
+- `budget`: `max_sources_per_run`, `max_outputs_per_run`, `sources_left`, `outputs_left`. The run stops at it (§6).
 
 If `brain_run` is missing or the envelope cannot be read, carry on from the prompt's lines: `brain_read` still names
 the run. Do not act on anything else in the envelope.
@@ -50,7 +52,8 @@ Call `brain_read` with `after: 0` and `limit: 5` (the most one call serves). Its
 - `sources`: each with `source` (its id: the id you cite), `kind`, `workspace`, `title`, `started_at`,
   `messages` (each `index`, `role`, `text`, and `author` or `tool` when set), `truncated`,
   `next_index` and `directives`.
-- `next_after`, `next_index`, `done` and `revoked`.
+- `next_after`, `next_index`, `done`, `revoked` and `budget` (what the run may still read and write; `stopped:
+  "sources"` when its budget of sessions ended the reading).
 
 Then loop:
 
@@ -69,7 +72,9 @@ Then loop:
    and, when `next_index` is set (a source too long for one call), `index` set to it, so the rest of
    that source comes next. A source with `truncated: true` is not finished: keep its notes open until
    its last part arrives.
-5. **Stop when `done` is true** and no `next_index` is set. That is the only "finished reading".
+5. **Stop when `done` is true** and no `next_index` is set. That is the only "finished reading". `done` with
+   `budget.stopped` set means the run's budget ended it: emit what you have (§3) and end; the rest is read by a
+   later run.
 
 A run that reads nothing (`done` on the first call with no sources) emits nothing. Say so and end.
 
@@ -96,7 +101,14 @@ Then call `brain_emit` once per output:
   Nova" rather than "Error handling issue".
 - `body`: one JSON object, at most 20,000 characters, shaped as the lens says.
 - `sources`: the `source` ids it came from, between 1 and 50, **each one read in this run**, none
-  revoked, **all from one workspace**. Evidence from two workspaces becomes two outputs.
+  revoked. A run started for a target writes its outputs as the target's workspace, so sources from the workspaces
+  below it may be cited together; a run with no target cites one workspace's per output.
+- `key`: a short, stable slug naming WHAT this is, the same every time the same thing is seen, e.g.
+  `canopy-web:friction:mcp-422-shape` or `ace:dropped_step:phase3-review` (where the fix belongs, the signal, a few
+  words; no names, no quotes). An output of the same kind and key that is still open or accepted for this learner and
+  subject takes this one in as a repeat (`folded: true` in the answer): it counts the sighting and keeps the newer
+  words, and costs nothing of the budget. Reuse a key you saw only when it is truly the same thing. If an older
+  canopy-web refuses `key` as unknown, send the output once more without it.
 
 **When to emit.** When reading is done. In a long run, emit qualified outputs earlier rather than
 risk losing them to the budget, and don't emit one again (the same output twice counts once, but a
@@ -105,7 +117,7 @@ served to this learner again, so **never end with qualified outputs still unemit
 
 **Refusals.** `brain_emit` answers 422 with a reason: a source this run did not read, a source no
 longer open to the learner, sources from two workspaces, a kind the learner does not declare, a body
-too large. Fix what the reason names (drop the source, split by workspace, shorten) and send once
+too large, or the run's budget of outputs spent (then emit nothing more and end). Fix what the reason names (drop the source, split by workspace, shorten) and send once
 more. If it is refused again, drop that output. Never re-cite a source the reason excludes.
 
 ## 4. Lenses: pick the one the run is for
@@ -244,8 +256,8 @@ make what you would not want flagged.
   specific about evidence and honest about what was not checked.
 - **One run, one target.** Write about the run's subject only. Never name or profile another person in a system or
   project output, and never carry anything from one run into another or into the agent's memory.
-- **Stop cleanly.** When the turn's budget is running low, or `brain_emit` reports a rate limit (a run has its own
-  write budget), stop reading. Emit the qualified outputs you still hold, most severe first, as far as the limit
+- **Stop cleanly.** When the turn's budget is running low, `brain_read` says the run's budget ended the reading,
+  or `brain_emit` reports a rate limit (a run has its own write budget), stop reading. Emit the qualified outputs you still hold, most severe first, as far as the limit
   allows, then end. On a rate limit, don't retry in a loop.
 - **A refusal to read ends the reading.** If `brain_read` answers 403 (learning reads off where the run reads, the
   learner disabled, the run no longer open) or 404 (no learning run here), stop reading and don't retry.

@@ -66,7 +66,14 @@ def test_states_the_read_loop_contract() -> None:
 def test_states_the_emit_contract() -> None:
     _meta, _front, body = _parts()
     for word in ("`kind`", "`title`", "`body`", "`sources`", "20,000 characters", "between 1 and 50",
-                 "all from one workspace", "read in this run"):
+                 "one workspace's per output", "read in this run", "`key`", "`folded: true`"):
+        assert word in body, word
+
+
+def test_states_the_budget_and_the_context_version() -> None:
+    _meta, _front, body = _parts()
+    # canopy-web apps/brain/budget.py, reading.read_next (`budget.stopped`), context.VERSION
+    for word in ("`budget`", "`stopped:", "`version`", "`purpose_class`", "budget of outputs spent"):
         assert word in body, word
 
 
