@@ -180,3 +180,31 @@ def test_register_without_rights_to_the_repo_still_registers(tmp_path, monkeypat
     posts = _fake_server(monkeypatch, recorded="", refuse_repo=True)
     assert register(repo) == {"slug": "echo"}
     assert len(posts) == 2 and "repo_url" not in posts[-1]
+
+
+def _stored_server(monkeypatch):
+    from orchestrator import agent_web
+    posts = []
+
+    def call(path, body=None, method="POST"):
+        if method == "GET":
+            return {"slug": "echo", "repo_url": "",
+                    "definition": {"source": "stored", "revision": 2, "root_sha256": "ab"}}
+        posts.append((path, body))
+        return {}
+
+    monkeypatch.setattr(agent_web, "_call", call)
+    return posts
+
+
+def test_publish_verbs_refuse_a_stored_agent(tmp_path, monkeypatch):
+    from orchestrator.agent_web import put_skills
+    repo = _agent(tmp_path)
+    posts = _stored_server(monkeypatch)
+    with pytest.raises(AgentWebError, match="STORED agent.*canopy agent definition edit"):
+        register(repo)
+    with pytest.raises(AgentWebError, match="STORED agent"):
+        put_skills(repo)
+    # The sync/tasks verbs' implicit register is a no-op for one, never an upsert.
+    assert register(repo, refuse_stored=False)["skipped"].startswith("stored agent")
+    assert posts == []

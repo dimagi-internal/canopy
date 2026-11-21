@@ -21,7 +21,9 @@ can fix it, and otherwise reported as NEEDS YOU with the exact URL, command or p
   <provider>       one per credential a person delegated to the agent (their GitHub token):
                    only the machines that run it get it, so here you use your own account —
                    for GitHub, checked with `gh auth status`
-  plugin           the agent's plugin is installed (`<plugin>@canopy-agents`)
+  plugin           the agent's plugin is installed (`<plugin>@canopy-agents`); a STORED
+                   agent (no repo) is first materialized into ~/.canopy/agents/<slug> and
+                   installed from that dir (`definition` step; docs/architecture/stored-agents.md)
   this project     sessions in --dir use the agent (`$CANOPY_AGENT`)
   env              the agent's env synced from its vault (`canopy cred sync`'s path)
   google login     the agent's Google login in gog — OAuth client file, token, account
@@ -119,6 +121,15 @@ class Deps:
     google_login: Callable[[str], dict] = field(
         default=lambda slug: {"ok": True, "imported": False, "wrote_client": False,
                               "summary": "present", "notes": []})
+    #: A STORED agent (no repo): (slug, dest) -> the materialize JSON dict; raises.
+    materialize: Callable[[str, Path], dict] = field(
+        default=lambda slug, dest: (_ for _ in ()).throw(RuntimeError("no materializer")))
+    #: (plugin, marketplace name, dir) -> (ok, last line): install a directory marketplace.
+    install_dir_plugin: Callable[[str, str, Path], tuple] = field(
+        default=lambda plugin, mkt, path: (False, "no installer"))
+    #: Where a stored agent is materialized on this computer.
+    stored_dir: Callable[[str], Path] = field(
+        default=lambda slug: Path.home() / ".canopy" / "agents" / slug)
 
 
 def _first_line(e: BaseException) -> str:
@@ -212,7 +223,11 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
     _own_account_steps(rep, slug, deps, access.get("delegated_withheld") or [])
 
     # 6. plugin ───────────────────────────────────────────────────────────────────
-    _plugin_step(rep, plugin, deps)
+    definition = agent.get("definition") if isinstance(agent.get("definition"), dict) else {}
+    if definition.get("source") == "stored":
+        _stored_plugin_step(rep, slug, plugin, deps, ask=ask)
+    else:
+        _plugin_step(rep, plugin, deps)
 
     # 7. this project ─────────────────────────────────────────────────────────────
     try:
@@ -457,6 +472,39 @@ def _plugin_step(rep: UseReport, plugin: str, deps: Deps) -> None:
                 f"{plugin}'s repo)")
 
 
+def _stored_plugin_step(rep: UseReport, slug: str, plugin: str, deps: Deps, *, ask: str) -> None:
+    """A STORED agent has no repo and is not in the canopy-agents catalog: materialize its
+    live revision into ~/.canopy/agents/<slug> and install that dir as a directory
+    marketplace. The fleet updater then keeps it current (`canopy agent sync`)."""
+    dest = Path(deps.stored_dir(slug))
+    try:
+        out = deps.materialize(slug, dest) or {}
+    except Exception as e:  # noqa: BLE001
+        rep.add("definition", NEEDS, f"could not materialize {slug}'s definition "
+                                     f"({_first_line(e)})",
+                f"re-run `canopy agent use {slug}`; if it keeps failing, ask {ask}")
+        rep.add("plugin", SKIP, "after definition")
+        return
+    rep.add("definition", DONE if out.get("changed") else OK,
+            f"revision {out.get('revision')} at {dest} (stored in canopy-web)")
+    try:
+        import json as _json
+        mname = _json.loads((dest / ".claude-plugin" / "marketplace.json")
+                            .read_text(encoding="utf-8")).get("name") or slug
+    except (OSError, ValueError, AttributeError):
+        mname = slug
+    try:
+        ok, last = deps.install_dir_plugin(plugin, mname, dest)
+    except Exception as e:  # noqa: BLE001 — no `claude` on PATH, a timeout
+        ok, last = False, _first_line(e)
+    if ok:
+        rep.add("plugin", DONE if last else OK, last or f"{plugin}@{mname} installed from {dest}")
+    else:
+        rep.add("plugin", NEEDS, f"could not install {plugin} from {dest} ({last or 'no output'})",
+                f"run `claude plugin marketplace add {dest}` then "
+                f"`claude plugin install {plugin}@{mname}`")
+
+
 def _env_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool) -> None:
     blocked = [s.name for s in rep.needs if s.name in ("device key", "vault access", "licence")]
     if blocked:
@@ -578,7 +626,49 @@ def real_deps() -> Deps:
         github_login=_gh_login,
         google_check=_google_check,
         google_login=_google_login,
+        materialize=_materialize,
+        install_dir_plugin=_install_dir_plugin,
     )
+
+
+def _materialize(slug: str, dest: Path) -> dict:
+    from orchestrator import local_cli
+    from orchestrator.agent_materialize import materialize
+    return materialize(slug, dest, token=local_cli.person_token())
+
+
+def _install_dir_plugin(plugin: str, mkt: str, path: Path) -> tuple:
+    """(ok, what was done — "" when nothing). `claude plugin marketplace add <dir>` +
+    `install <plugin>@<mkt>`; an installed one is refreshed from the dir's HEAD with the
+    canopy plugin's fleet updater (the one copy path)."""
+    import subprocess
+
+    from orchestrator.agent_prepare import canopy_fleet_updater
+
+    def claude(*args, timeout=600):
+        r = subprocess.run(["claude", "plugin", *args], capture_output=True, text=True,
+                           timeout=timeout)
+        return r.returncode, (r.stdout or ""), (r.stderr or r.stdout or "").strip()
+
+    rc, listed, _ = claude("marketplace", "list", timeout=120)
+    if mkt not in listed.split():
+        rc, _, err = claude("marketplace", "add", str(path))
+        if rc != 0:
+            return False, f"marketplace add: {err.splitlines()[-1] if err else rc}"
+    rc, installed, _ = claude("list", timeout=120)
+    if f"{plugin}@{mkt}" in installed:
+        updater = canopy_fleet_updater(Path.home())
+        if updater is None:
+            return True, ""
+        r = subprocess.run(["python3", str(updater), "--refresh", plugin, "--clone", str(path)],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            return False, f"refresh: {(r.stdout or r.stderr).strip()[:200]}"
+        return True, "" if "up-to-date" in (r.stdout or "") else f"refreshed {plugin}@{mkt}"
+    rc, _, err = claude("install", f"{plugin}@{mkt}")
+    if rc != 0:
+        return False, f"install: {err.splitlines()[-1] if err else rc}"
+    return True, f"installed {plugin}@{mkt} from {path}"
 
 
 def _google_check(slug: str) -> dict:

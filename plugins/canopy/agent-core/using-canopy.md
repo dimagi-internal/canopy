@@ -27,7 +27,9 @@ If your recommendation contradicts a page you have just read, say so and reconci
 ## The two things that get confused
 
 - **Plugin vs instance.** A *plugin* is an agent's code (skills, rails, persona) installed from its
-  GitHub repo. An *instance* is canopy-web's `Agent` record: identity, workspace, vault. A local
+  GitHub repo — or, for a **stored agent**, from its definition in canopy-web, which runners and
+  `canopy agent use` materialize into a local git dir. A stored agent changes itself only by
+  proposing a draft (`canopy agent definition edit`); a human publishes it. An *instance* is canopy-web's `Agent` record: identity, workspace, vault. A local
   install is bound to exactly ONE instance (`/<plugin>:setup`).
 - **Two ways to run an agent, both normal.** *Use it yourself* in your own Claude Code
   (`canopy agent use <slug>`, then `/<slug>:turn`), or *let it run on its own* on a runner
@@ -44,6 +46,7 @@ If your recommendation contradicts a page you have just read, say so and reconci
 | Who can do what; licences; turn modes | canopy-web [access.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md), [roles.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/roles.md) | `who_is_asking`, `canopy agent read-mode get --slug <slug>`, `canopy agent sites list --slug <slug>` |
 | Runners, schedules, routing | canopy-web [runners.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/runners.md) | `canopy agent doctor`, the runner list |
 | Setting up / vaults / device grants | `docs/architecture/agent-setup-lifecycle.md` | `canopy agent doctor`, the agent's vault members |
+| Stored agents (no repo): drafts, publish, rollback, materialize | `docs/architecture/stored-agents.md` | `canopy agent definition show --slug <slug>`, `canopy agent definition --help` |
 | Words used here (plugin, instance, runner, local turn…) | `docs/GLOSSARY.md` | — |
 | How this repo's docs are kept honest | `docs/documentation.md` | — |
 

@@ -49,3 +49,12 @@ by concatenating a known version is fragile.
 canonical one-liner is the first line of the idiom above (`…['plugins']['canopy@canopy'][0]['installPath']`).
 For the same shape per skill, use `canopy skills list --json-output` (each entry carries
 `installed_version` and `cache_path`).
+
+## Stored agents: a materialized dir is the marketplace
+
+A stored agent (no GitHub repo; [stored-agents.md](stored-agents.md)) is installed from a dir canopy
+materializes: `~/.canopy/agents/<slug>` on a laptop (`canopy agent use`), `$AGENT_ROOT/<slug>` on a runner.
+That dir is a git repo whose origin is `canopy://<workspace>/<slug>` and whose HEAD is one deterministic
+orphan commit per revision, with `origin/main` on it, so `off_release_branch`, `--refresh` and the
+version-keyed cache (plugin.json `version` = `0.<revision>.0`) work unchanged. The fleet updater never
+`git fetch`es such a dir: it runs `canopy agent sync --slug <slug> --dest <dir>` and installs the new HEAD.

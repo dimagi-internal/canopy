@@ -46,7 +46,20 @@ _MAX_DEPTH = 12
 # Calls canopy-web does not serve, kept on purpose — each with its reason and its way
 # out. `routes` prints them, so canopy-web's check skips them rather than failing on a
 # route it already removed.
-ALLOWED_MISSING: dict = {}
+_STORED = ("stored agents (docs/architecture/stored-agents.md): canopy-web's definition API is landing in parallel; refresh the vendored schema once it merges and these drop out")
+ALLOWED_MISSING: dict = {
+    ("POST", "/api/agents/stored"): _STORED,
+    ("GET", "/api/agents/{}/definition"): _STORED,
+    ("POST", "/api/agents/{}/definition/convert"): _STORED,
+    ("POST", "/api/agents/{}/definition/drafts"): _STORED,
+    ("GET", "/api/agents/{}/definition/revisions"): _STORED,
+    ("GET", "/api/agents/{}/definition/revisions/{}"): _STORED,
+    ("POST", "/api/agents/{}/definition/revisions/{}/discard"): _STORED,
+    ("POST", "/api/agents/{}/definition/revisions/{}/publish"): _STORED,
+    ("POST", "/api/agents/{}/definition/rollback"): _STORED,
+    ("GET", "/api/agents/{}/definition/revisions/{}/files/{}"): _STORED,
+    ("GET", "/api/agents/{}/definition/revisions/{}/diff"): _STORED,
+}
 
 _NOT_PATH_BUILDERS = frozenset({"quote", "quote_plus", "urlencode", "str", "int", "get", "dumps"})
 

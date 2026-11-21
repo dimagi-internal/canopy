@@ -127,20 +127,78 @@ def agent_move(slug, workspace, dry_run):
 
 @agent.command("sync")
 @click.option("--slug", required=True)
-@click.option("--doc-url", required=True)
-@click.option("--title", required=True)
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="Definition sync: read with the runner's token (CANOPY_TOKEN), into "
+                   "$AGENT_ROOT/<slug>.")
+@click.option("--dest", default=None, type=click.Path(file_okay=False),
+              help="Definition sync: the agent's dir (default: $AGENT_ROOT/<slug> with "
+                   "--runner, else ~/.canopy/agents/<slug>).")
+@click.option("--agent-root", default=None, help="Definition sync: the runner's agent root.")
+@click.option("--doc-url", default=None, help="Manager sync: the gdoc (the sync's body).")
+@click.option("--title", default=None)
 @click.option("--summary", default="")
 @click.option("--grades", default="{}", help="JSON object of self-grades")
-@click.option("--period-start", required=True)
-@click.option("--period-end", required=True)
+@click.option("--period-start", default=None)
+@click.option("--period-end", default=None)
 @click.option("--source", default="manager-sync")
-def agent_sync(slug, doc_url, title, summary, grades, period_start, period_end, source):
-    """Post a manager sync."""
+def agent_sync(slug, runner_mode, dest, agent_root, doc_url, title, summary, grades,
+               period_start, period_end, source):
+    """Two verbs under one name.
+
+    \b
+    MANAGER SYNC (--doc-url --title --period-start --period-end): post a manager sync.
+    DEFINITION SYNC (none of those): a STORED agent's `git pull --ff-only` — materialize
+      its live revision into its dir when it changed (docs/architecture/stored-agents.md),
+      then print ONE JSON line {slug, revision, root_sha256, commit, changed}. A dir that
+      does not exist yet is created; one that is a GitHub clone is refused.
+    """
+    manager = [doc_url, title, period_start, period_end]
+    if any(v is not None for v in manager):
+        if not all(manager):
+            raise click.ClickException("a manager sync needs --doc-url, --title, "
+                                       "--period-start and --period-end")
+        try:
+            c = _client(slug)
+            _emit(c.post_sync(period_start=period_start, period_end=period_end, title=title,
+                              summary=summary, doc_url=doc_url,
+                              self_grades=json.loads(grades), source=source))
+        except (CanopyError, RuntimeError) as e:
+            raise click.ClickException(str(e))
+        return
+    from orchestrator import agent_materialize as am
+
+    target = Path(dest).expanduser() if dest else am.default_dest(
+        slug, runner=runner_mode, agent_root=agent_root)
+    if (target / ".git").exists() and not am.is_stored_clone(target):
+        raise click.ClickException(f"{target} is a git clone of a repository, not a stored "
+                                   f"agent's materialized dir — `git pull` it instead")
     try:
-        c = _client(slug)
-        _emit(c.post_sync(period_start=period_start, period_end=period_end, title=title,
-                          summary=summary, doc_url=doc_url, self_grades=json.loads(grades), source=source))
-    except (CanopyError, RuntimeError) as e:
+        _emit(am.materialize(slug, target, runner=runner_mode))
+    except am.MaterializeError as e:
+        raise click.ClickException(str(e))
+
+
+@agent.command("materialize")
+@click.option("--slug", required=True)
+@click.option("--dest", required=True, type=click.Path(file_okay=False),
+              help="The dir to write (created when missing; untracked files in it are kept).")
+@click.option("--revision", default="live", show_default=True, help="A revision number, or live.")
+@click.option("--runner", "runner_mode", is_flag=True,
+              help="Read with the runner's credentials (CANOPY_TOKEN), as `agent prepare "
+                   "--runner` does; otherwise your canopy-web login.")
+def agent_materialize(slug, dest, revision, runner_mode):
+    """Write a STORED agent's revision into DEST as a git repo with ONE deterministic commit.
+
+    Verifies the archive's root before writing anything; tracked files are replaced exactly
+    and ones absent from the revision deleted; untracked and ignored files (.env,
+    node_modules) stay. HEAD, main and origin/main all point at the commit; origin's url is
+    canopy://<workspace>/<slug>. Prints ONE JSON line {slug, revision, root_sha256, commit,
+    changed}; does nothing when DEST is already at that revision."""
+    from orchestrator import agent_materialize as am
+
+    try:
+        _emit(am.materialize(slug, Path(dest), revision=revision, runner=runner_mode))
+    except am.MaterializeError as e:
         raise click.ClickException(str(e))
 
 
@@ -2413,3 +2471,8 @@ def agent_session_token_cmd(slug):
     token = turn_agent_token.resolve(slug, session_only=True)
     if token:
         click.echo(token)
+
+
+from orchestrator.agent_definition_cli import definition as _definition_group  # noqa: E402
+
+agent.add_command(_definition_group)

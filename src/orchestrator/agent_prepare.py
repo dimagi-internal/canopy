@@ -24,6 +24,9 @@ TWO CREDENTIAL MODES, one set of steps:
 RUNNER STEPS, in order (each says what it did; one failing never stops the rest):
   1. repo — clone, or `git pull --ff-only`, with the owner's GitHub token on that one git
      command only. A pull that fails on an existing clone provisions the clone as it is.
+     A STORED agent (the resolve payload's `definition.source == "stored"`) has no repo:
+     its live revision is materialized into the same dest instead (agent_materialize.py,
+     docs/architecture/stored-agents.md); every later step is unchanged.
   2. env — ~/.<slug>/.env written from the agent's Canopy vault values.
   3. plugins — its own plugin from the clone (a directory marketplace: the pull is the
      update); each required plugin cloned beside the CLI's marketplaces, pulled every pass,
@@ -100,6 +103,9 @@ class RunnerCredentials:
     google_account: str = ""
     web_gog_token: Optional[str] = field(default=None, repr=False)
     repo_url: str = ""
+    #: Where the agent's definition lives: {source: "repo"|"stored", revision, root_sha256}
+    #: from the resolve payload (or /runtime). {} from a canopy-web that does not say.
+    definition: dict = field(default_factory=dict)
     error: str = ""
     #: The agent's env, from the Canopy vault: canopy-web's resolved values.
     values: dict = field(default_factory=dict, repr=False)
@@ -197,9 +203,10 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
                                        f"{_first_line(str(e), 200)}")
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
     extras = {k: body[k] for k in RESOLVE_EXTRAS if body.get(k) not in (None, "")}
+    definition = body.get("definition") or rt.get("definition") or {}
     return RunnerCredentials(
         values=values, extras=extras,
-        repo_url=repo_url,
+        repo_url=repo_url, definition=definition if isinstance(definition, dict) else {},
         github_token=str(body.get("github_token") or ""), mailbox=str(body.get("mailbox") or ""),
         mailbox_backend=str(body.get("mailbox_backend") or ""),
         google_account=str(body.get("google_account") or "").strip(),
@@ -279,8 +286,11 @@ class RunnerPreparer(Bootstrapper):
                  transport: Optional[canopy_web.Transport] = None,
                  creds_for: Optional[Callable[[str], RunnerCredentials]] = None,
                  runner_name: str = "", purpose: str = "",
-                 no_secret_files: Optional[bool] = None, in_turn: bool = False, **kw):
+                 no_secret_files: Optional[bool] = None, in_turn: bool = False,
+                 materialize: Optional[Callable[[str, Path], dict]] = None, **kw):
         self.base_url, self.token, self.transport = base_url, token, transport
+        #: (slug, dest) -> the materialize JSON dict; raises. A STORED agent's step 1.
+        self._materialize = materialize or self._materialize_live
         #: Secrets off disk (module doc): resolve and check, write no value to a file.
         self.no_secret_files = secrets_off_disk() if no_secret_files is None else no_secret_files
         self.agent_root = Path(agent_root)
@@ -346,8 +356,47 @@ class RunnerPreparer(Bootstrapper):
             return str(e)
         return "" if r.returncode == 0 else _first_line(r.stderr or r.stdout, 300)
 
+    def _materialize_live(self, slug: str, dest: Path) -> dict:
+        from orchestrator.agent_materialize import materialize
+        return materialize(slug, dest, runner=True, base_url=self.base_url,
+                           token=self.token or None)
+
+    def is_stored(self, slug: str, dest: Path, repo_url: str = "") -> bool:
+        """A STORED agent: canopy-web says so, or (no repo recorded) its dir is one already."""
+        if repo_url:
+            return False
+        c = self.creds(slug)
+        if str((c.definition or {}).get("source") or "") == "stored":
+            return True
+        if c.repo_url:
+            return False
+        from orchestrator.agent_materialize import is_stored_clone
+        return is_stored_clone(dest)
+
+    def step_materialize(self, slug: str, dest: Path, rep: RunnerReport) -> Optional[Path]:
+        """Step 1 for a stored agent: its live revision materialized into the clone dest
+        (`canopy agent materialize --runner`), in place of a clone or pull."""
+        if self.dry_run:
+            rep.notes.append(f"repo: would materialize {slug}'s live definition into {dest}")
+            return dest if (dest / ".git").is_dir() else None
+        try:
+            out = self._materialize(slug, dest) or {}
+        except Exception as e:  # noqa: BLE001 — MaterializeError, git, the network
+            if (dest / ".git").is_dir():
+                rep.notes.append(f"repo not updated: {_first_line(str(e), 300)} — provisioning "
+                                 "the materialized dir as it is")
+                return dest
+            rep.fail(f"repo: could not materialize {slug}'s definition: {_first_line(str(e), 300)}")
+            return None
+        rep.notes.append(f"ok: repo: {slug} definition revision {out.get('revision')} "
+                         f"({str(out.get('commit') or '')[:8]}"
+                         f"{', changed' if out.get('changed') else ', unchanged'})")
+        return dest
+
     def step_repo(self, slug: str, repo_url: str, rep: RunnerReport) -> Optional[Path]:
         dest = self.agent_root / slug
+        if self.is_stored(slug, dest, repo_url):
+            return self.step_materialize(slug, dest, rep)
         url = repo_url or self.creds(slug).repo_url
         if not url:
             if (dest / ".git").is_dir():

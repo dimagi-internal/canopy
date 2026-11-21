@@ -163,7 +163,25 @@ def catalog_from_repo(repo_dir: Path) -> list[dict]:
 _AMBIGUOUS_HOME = "no unambiguous workspace to home this agent in"
 
 
-def register(repo_dir: Path, workspace: str = "") -> dict:
+#: What a refused publish verb says about a STORED agent (docs/architecture/stored-agents.md).
+STORED_REFUSAL = ("'{slug}' is a STORED agent: its definition (skills included) lives in "
+                  "canopy-web, not in a repo. Change it with `canopy agent definition edit "
+                  "--slug {slug} …` (a draft a human publishes); canopy-web refreshes the skill "
+                  "catalog itself on publish.")
+
+
+def is_stored(slug: str) -> bool:
+    """Whether canopy-web records ``slug`` as a stored agent. A 404 (a new agent) or an
+    older canopy-web that does not say is "no"."""
+    try:
+        agent = _call(f"/api/agents/{slug}/", method="GET")
+    except Exception:  # noqa: BLE001 — a probe: anything but a clear "stored" is "no"
+        return False
+    d = agent.get("definition") if isinstance(agent, dict) else None
+    return isinstance(d, dict) and d.get("source") == "stored"
+
+
+def register(repo_dir: Path, workspace: str = "", *, refuse_stored: bool = True) -> dict:
     """Upsert the agent. ``workspace`` is an explicit home: always sent, so it MOVES an
     already-registered agent (same contract as ``canopy agent register --workspace``).
 
@@ -173,6 +191,12 @@ def register(repo_dir: Path, workspace: str = "") -> dict:
     fallback home: ``workspace`` in config/agent.json, else ``CANOPY_WEB_WORKSPACE``. That
     refusal happens on create only, so a fallback can never move an existing agent."""
     ident = resolve_identity(repo_dir)
+    if is_stored(ident["slug"]):
+        # A stored agent is created and changed through the definition API; an upsert from
+        # a (materialized) dir would only overwrite canopy-web's record with a copy of itself.
+        if refuse_stored:
+            raise AgentWebError(STORED_REFUSAL.format(slug=ident["slug"]))
+        return {"slug": ident["slug"], "skipped": "stored agent: registered in canopy-web"}
     body = {
         "slug": ident["slug"], "name": ident["name"], "email": ident["email"],
         "description": ident["description"], "persona": ident["persona"],
@@ -240,6 +264,8 @@ def _upsert(body: dict) -> dict:
 
 def put_skills(repo_dir: Path) -> dict:
     ident = resolve_identity(repo_dir)
+    if is_stored(ident["slug"]):
+        raise AgentWebError(STORED_REFUSAL.format(slug=ident["slug"]))
     items = catalog_from_repo(repo_dir)
     return _call(f"/api/agents/{ident['slug']}/skills/", {"skills": items}, method="PUT")
 

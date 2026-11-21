@@ -6,13 +6,14 @@ the logic that needs a person's machine (a terminal); a box runs the same code a
 
 | Stage | The one implementation | Entry points that call it |
 |---|---|---|
-| Create the repo | `canopy_agent_factory` (templates + push) | canopy-web New-agent page; `/canopy:create-agent` |
+| Create the repo | `canopy_agent_factory` (templates + push); a STORED agent has none (canopy-web renders the factory into revision 1) | canopy-web New-agent page; `/canopy:create-agent`; `canopy create-agent --stored` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
 | Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) | the agent's Settings → Security tab; the checklist's Vault step; `/canopy:create-agent` |
 | A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`, then **Give them access** (Settings → Security); `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
 | The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Security → **Give it its canopy login** |
 | Use an agent yourself, no runner | `canopy agent use <slug>` (`src/orchestrator/agent_use.py`) | a person on their own computer ([running-an-agent.md](../running-an-agent.md)) |
 | Make an agent runnable here | `canopy agent prepare` (`src/orchestrator/agent_prepare.py`; person mode is `canopy agent bootstrap`) | cloud box bootstrap and each claim; laptop runner at claim |
+| A stored agent's files (no repo) | `canopy agent materialize` / `agent sync` (`src/orchestrator/agent_materialize.py`; [stored-agents.md](stored-agents.md)) | `agent prepare --runner` step 1, the fleet updater, `canopy agent use` |
 | Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check (`src/orchestrator/agent_doctor.py::check_setup`) reads `agent_setup` |
 
 `agent_prepare.py`'s module docstring lists its steps in order and the two credential modes (person vs
