@@ -19,11 +19,15 @@
  *        ${CANOPY_WEB_BASE}/auth/cli/authorize/
  *          ?cb=http://127.0.0.1:NNNN/cb&state=<nonce>&label=<label>
  *   4. canopy-web (after @login_required bounce if needed) shows a
- *      one-click "Authorize" page. On click, it mints a PersonalToken
- *      and 302-redirects to <cb>?token=<raw>&state=<state>.
- *   5. Listener verifies state, extracts token, writes to
- *      ~/.claude/canopy/workbench-token with mode 600, returns
- *      "OK you can close this tab" page, shuts down.
+ *      one-click "Authorize" page. On click, it 302-redirects to
+ *      <cb>?code=<one-time code>&state=<state>. The raw token is never
+ *      in that URL, so it never lands in the browser's history.
+ *   5. Listener verifies state, POSTs the code (with the state) to
+ *      ${CANOPY_WEB_BASE}/auth/cli/token/, which mints the token once and
+ *      returns it, writes it to ~/.claude/canopy/workbench-token with
+ *      mode 600, returns "OK you can close this tab" page, shuts down.
+ *      (An older canopy-web sends <cb>?token=<raw> instead; that is still
+ *      accepted until every deployment sends a code.)
  *
  * Usage:
  *   npx --yes tsx scripts/canopy-web-pat-mint.ts [label]
@@ -121,6 +125,27 @@ function openInBrowser(url: string): void {
   }
 }
 
+/**
+ * Trade the callback's one-time code for the token. The code is single-use and
+ * lives two minutes; the state goes with it so a code lifted from one mint
+ * cannot be spent by another.
+ */
+export async function exchangeCode(
+  base: string, code: string, state: string, fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  const res = await fetchImpl(`${base}/auth/cli/token/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, state }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { token?: unknown; detail?: unknown };
+  if (!res.ok || typeof body.token !== 'string' || !body.token) {
+    const why = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
+    throw new Error(`code exchange failed: ${why}`);
+  }
+  return body.token;
+}
+
 async function captureToken(label: string): Promise<string> {
   const state = randomBytes(32).toString('base64url');
   return new Promise<string>((resolve, reject) => {
@@ -135,7 +160,8 @@ async function captureToken(label: string): Promise<string> {
         return;
       }
       const u = new URL(req.url, 'http://127.0.0.1');
-      const t = u.searchParams.get('token');
+      const code = u.searchParams.get('code');
+      const legacyToken = u.searchParams.get('token');
       const s = u.searchParams.get('state');
 
       if (s !== state) {
@@ -146,26 +172,33 @@ async function captureToken(label: string): Promise<string> {
         reject(new Error('state mismatch — possible cross-process race'));
         return;
       }
-      if (!t) {
+      if (!code && !legacyToken) {
         res.statusCode = 400;
-        res.end('no token');
+        res.end('no code');
         clearTimeout(timer);
         server.close();
-        reject(new Error('callback missing token query param'));
+        reject(new Error('callback missing code query param'));
         return;
       }
 
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(`<!doctype html><meta charset="utf-8"><title>OK</title>
+      clearTimeout(timer);
+      const got = code ? exchangeCode(CANOPY_WEB_BASE, code, state) : Promise.resolve(legacyToken as string);
+      got.then((t) => {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(`<!doctype html><meta charset="utf-8"><title>OK</title>
 <style>body{font-family:system-ui;max-width:480px;margin:6rem auto;text-align:center;color:#1a1a1a}
 h1{color:#15803d;font-size:1.4rem;margin:0 0 .75rem}
 p{color:#555;line-height:1.5}</style>
 <h1>Token captured</h1><p>You can close this tab and return to your terminal.</p>`);
-
-      clearTimeout(timer);
-      server.close();
-      resolve(t);
+        server.close();
+        resolve(t);
+      }, (e: Error) => {
+        res.statusCode = 502;
+        res.end('could not finish signing in; see your terminal');
+        server.close();
+        reject(e);
+      });
     });
 
     server.listen(0, '127.0.0.1', () => {

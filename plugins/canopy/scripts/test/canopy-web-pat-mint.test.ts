@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { browserOpenCommand, isDirectInvocation, writeTokenFile } from '../canopy-web-pat-mint.js';
+import { browserOpenCommand, exchangeCode, isDirectInvocation, writeTokenFile } from '../canopy-web-pat-mint.js';
 
 // Ported from ace's test/scripts/ace-web-pat-mint.test.ts and adapted to
 // canopy's token sink: canopy writes the RAW token (+ trailing newline) to a
@@ -151,5 +151,27 @@ describe('isDirectInvocation', () => {
 
   it('is false when argv[1] is absent rather than throwing', () => {
     expect(isDirectInvocation('file:///x.ts', undefined)).toBe(false);
+  });
+});
+
+describe('exchangeCode', () => {
+  it('trades the one-time code and state for the token (never a token in the URL)', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fake = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ token: 'cpat_raw' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const token = await exchangeCode('https://canopy.example', 'one-time', 'st-1', fake);
+    expect(token).toBe('cpat_raw');
+    expect(calls[0].url).toBe('https://canopy.example/auth/cli/token/');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ code: 'one-time', state: 'st-1' });
+  });
+
+  it('fails with the server\'s reason when the code is spent or expired', async () => {
+    const fake = (async () => new Response(JSON.stringify({ detail: 'invalid or expired code' }),
+      { status: 400 })) as unknown as typeof fetch;
+    await expect(exchangeCode('https://canopy.example', 'x', 'y', fake))
+      .rejects.toThrow('invalid or expired code');
   });
 });
