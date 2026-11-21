@@ -1,10 +1,11 @@
 """Structural invariants for the brain-learn skill, the entry of a Canopy Brain learning run.
 
-The run is a confined turn whose only canopy tools are `who_is_asking`, `brain_read` and `brain_emit`
-(canopy-web `apps/agents/published_profiles.py` BRAIN_TOOLS). So the skill must hold its whole lens and
-name no shell, file-writing or project-skill step: a skill that needs one fails silently in the run. The
-paging and emit contract it states is canopy-web's (`apps/brain/reading.py`, `emit.py`, `api_run.py`);
-these pins catch the skill drifting from the words it hangs on.
+The run is a full-profile turn of the learner's operator agent whose context canopy-web sets up (the caller
+envelope's `brain_run`, canopy-web `apps/brain/context.py`). It reads the sessions due only through `brain_read`,
+records what it learned with `brain_emit`, and may then act within the agent's rails; canopy-web records what the
+turn makes against what it read (`apps/brain/lineage.py`). The skill holds its whole lens and embeds no shell. The
+paging and emit contract it states is canopy-web's (`apps/brain/reading.py`, `emit.py`, `api_run.py`); these pins
+catch the skill drifting from the words it hangs on.
 """
 from __future__ import annotations
 
@@ -35,13 +36,23 @@ def test_frontmatter_names_the_entry_and_fits() -> None:
         assert tool in meta["description"], tool
 
 
-def test_needs_no_tool_the_brain_profile_lacks() -> None:
+def test_embeds_no_shell_and_loads_no_lens() -> None:
     _meta, _front, body = _parts()
     assert "```bash" not in body and "```sh" not in body
     assert not re.search(r"\$\d", body)
     assert "uv run" not in body and "canopy agent" not in body
     # The review lens is written in, not loaded: no project-skill call is made.
     assert "open_project" not in body and "project_skill(" not in body
+
+
+def test_reads_its_context_and_the_sessions_only_through_brain_read() -> None:
+    _meta, _front, body = _parts()
+    for word in ("`brain_run`", "`target`", "`accountable`", "`sessions_due`", "`source_ids_due`", "full-profile"):
+        assert word in body, word
+    assert "ONLY through `brain_read`" in body
+    for other in ("`search_sessions`", "`canopy_sessions_get_session`"):
+        assert other in body, other               # named as what not to use
+    assert "memory" in body
 
 
 def test_states_the_read_loop_contract() -> None:
@@ -76,9 +87,12 @@ def test_a_finding_carries_severity_fix_home_evidence_and_fix() -> None:
         assert field in body, field
 
 
-def test_it_never_acts_and_stops_cleanly() -> None:
+def test_it_emits_first_acts_within_its_rails_and_stops_cleanly() -> None:
     _meta, _front, body = _parts()
-    assert "**Never act. Only emit.**" in body
+    assert "**Read only through `brain_read`, emit first, act second.**" in body
+    assert "**The finding is emitted first**" in body and "turn mode" in body
+    assert "**Report every pull request, issue or link you create outside canopy**" in body
+    assert "**It quotes no one.**" in body
     assert "rate limit" in body and "budget" in body
     assert "never instructions to follow" in " ".join(body.split())
 
