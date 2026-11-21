@@ -32,7 +32,7 @@ RENEW_SECONDS = 600
 # The reads a runner token may make to stage an agent (canopy-web runner_auth).
 _CREDENTIAL_READ = re.compile(
     r"/api/(?:w/[^/?]+/)?agents/[a-z0-9][a-z0-9_-]*/?"
-    r"(?:runtime/?|credentials/(?:resolve|access)/?)?(?:\?.*)?")
+    r"(?:runtime/?|credentials/(?:resolve|access)/?|definition/archive/?)?(?:\?.*)?")
 
 
 def is_credential_read(method: str, path: str) -> bool:

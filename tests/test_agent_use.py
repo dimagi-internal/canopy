@@ -584,3 +584,53 @@ def test_google_login_cli_without_gog_names_the_install_line(monkeypatch, tmp_pa
     monkeypatch.setattr(shutil, "which", lambda name: None)
     r = CliRunner().invoke(agent_cli.agent, ["google-login", "--slug", "ace", "--if-needed"])
     assert r.exit_code == 1 and "gog is not installed" in r.output
+
+
+# ── a STORED agent: materialized into ~/.canopy/agents/<slug>, installed from that dir ──────
+
+def _stored(w, tmp_path, *, materialize=None, install=(True, "installed eva@eva from x")):
+    import json as _json
+
+    w.agent["definition"] = {"source": "stored", "revision": 4, "root_sha256": "ab" * 32}
+    dest = tmp_path / "agents" / "eva"
+    seen = {"materialize": [], "install": []}
+
+    def mat(slug, d):
+        seen["materialize"].append((slug, d))
+        if materialize:
+            raise materialize
+        (d / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        (d / ".claude-plugin" / "marketplace.json").write_text(_json.dumps({"name": "eva-mkt"}))
+        return {"slug": slug, "revision": 4, "commit": "c" * 40, "changed": True}
+
+    def inst(plugin, mkt, path):
+        seen["install"].append((plugin, mkt, path))
+        return install
+
+    deps = w.deps()
+    deps.materialize, deps.install_dir_plugin, deps.stored_dir = mat, inst, lambda s: dest
+    return au.run("eva", str(tmp_path), deps), seen, dest
+
+
+def test_a_stored_agent_is_materialized_and_installed_from_its_dir(w, tmp_path):
+    rep, seen, dest = _stored(w, tmp_path)
+    assert seen["materialize"] == [("eva", dest)]
+    assert seen["install"] == [("eva", "eva-mkt", dest)]
+    assert _step(rep, "definition").status == au.DONE
+    assert "revision 4" in _step(rep, "definition").detail
+    assert _step(rep, "plugin").status == au.DONE
+    assert w.installs == []                     # never the canopy-agents catalog
+    assert not rep.needs
+
+
+def test_a_stored_agent_whose_definition_cannot_be_read_needs_you(w, tmp_path):
+    rep, seen, _ = _stored(w, tmp_path, materialize=RuntimeError("archive -> 403: no"))
+    d = _step(rep, "definition")
+    assert d.status == au.NEEDS and "403" in d.detail
+    assert _step(rep, "plugin").status == au.SKIP and seen["install"] == []
+
+
+def test_a_stored_agent_whose_install_fails_names_the_commands(w, tmp_path):
+    rep, _, dest = _stored(w, tmp_path, install=(False, "install: boom"))
+    p = _step(rep, "plugin")
+    assert p.status == au.NEEDS and f"claude plugin marketplace add {dest}" in p.fix

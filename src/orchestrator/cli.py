@@ -1357,14 +1357,24 @@ def _print_cycle_result(result: dict) -> None:
 @click.option("--force", is_flag=True, help="Scaffold into a non-empty directory")
 @click.option("--git-init/--no-git-init", default=True,
               help="git init + initial commit in the new repo (default: on)")
+@click.option("--stored", is_flag=True,
+              help="Create a STORED agent in canopy-web (no GitHub repo): canopy-web renders "
+                   "the factory and publishes it as revision 1. Writes nothing locally. "
+                   "Needs --workspace (or CANOPY_WEB_WORKSPACE).")
+@click.option("--workspace", default="", help="With --stored: the canopy-web workspace.")
 def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders, target, force,
-                     git_init):
+                     git_init, stored, workspace):
     """Scaffold a new Claude Code agent from the canopy operating model.
 
     Generates an agent repo (persona, the `turn` orchestrator, reads-free / writes-gated
     deny rails in config/gating.json that canopy's session hook enforces, the
     marketplace.json a runner installs it from, a canopy-web-ready layout) grounded in the
     primitives proven by echo. See docs/agent-operating-model.md.
+
+    With --stored the same factory output is created IN canopy-web instead (POST
+    /api/agents/stored): no repo, no push, no `agent-publish register`. Change it with
+    `canopy agent definition edit`; use it with `canopy agent use <slug>`
+    (docs/architecture/stored-agents.md).
     """
     import subprocess
     from canopy_agent_factory import (
@@ -1377,6 +1387,28 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
         raise click.ClickException(str(e))
 
     display = name or slug.replace("-", " ").title()
+    if stored:
+        import json as _json
+
+        from orchestrator import canopy_web
+        ws = (workspace or "").strip() or canopy_web.resolve_workspace(None) or ""
+        if not ws:
+            raise click.ClickException("a stored agent needs its workspace: --workspace <slug> "
+                                       "(or CANOPY_WEB_WORKSPACE)")
+        body = {"name": display, "slug": slug, "mandate": mandate.strip(), "workspace": ws}
+        if stakeholders:
+            body["stakeholders"] = stakeholders
+        try:
+            out = canopy_web.call("POST", "/api/agents/stored", body)
+        except (canopy_web.CanopyError, RuntimeError, OSError) as e:
+            raise click.ClickException(str(e))
+        click.echo(_json.dumps(out))
+        click.echo(f"Created stored agent {display} ({slug}) in workspace {ws} — revision 1, "
+                   "published. Nothing was written here.", err=True)
+        click.echo("Next: `canopy agent definition files --slug " + slug + "`, edit with "
+                   "`canopy agent definition edit`, use it with `canopy agent use " + slug + "`.",
+                   err=True)
+        return
     dest = Path(target).expanduser() if target else Path.cwd() / slug
     spec = AgentSpec(
         slug=slug, display_name=display, mandate=mandate.strip(),
@@ -2224,7 +2256,7 @@ def agent_publish_sync(repo, workspace, doc_url, title, summary, grades, period_
     import json as json_mod
     from orchestrator.agent_web import post_sync, register, AgentWebError
     try:
-        register(_agent_repo(repo), workspace)
+        register(_agent_repo(repo), workspace, refuse_stored=False)
         out = post_sync(
             _agent_repo(repo), doc_url=doc_url, title=title, summary=summary,
             grades=json_mod.loads(grades), period_start=period_start,
@@ -2249,7 +2281,7 @@ def agent_publish_tasks(repo, workspace, tasks_json):
     import json as json_mod
     from orchestrator.agent_web import push_tasks, register, AgentWebError
     try:
-        register(_agent_repo(repo), workspace)
+        register(_agent_repo(repo), workspace, refuse_stored=False)
         tasks = json_mod.load(open(tasks_json, encoding="utf-8"))
         if not isinstance(tasks, list):
             raise click.ClickException("tasks file must be a JSON list")

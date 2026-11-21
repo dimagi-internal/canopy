@@ -52,18 +52,7 @@ TRANSFER_EXCLUDES = ("node_modules", ".git", "__pycache__", "*.pyc", ".venv", ".
 
 # High-signal, low-noise credential shapes. Deliberately conservative: this warns a human, it
 # does not block, so a false positive costs a glance and a false negative costs a leaked token.
-_SECRET_PATTERNS = (
-    ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("AWS access key id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("Slack token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b")),
-    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    ("OpenAI/Anthropic key", re.compile(r"\b(?:sk|sk-ant)-[A-Za-z0-9_\-]{20,}\b")),
-    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
-    ("assigned secret", re.compile(
-        r"(?i)\b(?:api[_-]?key|secret|passwd|password|access[_-]?token|refresh[_-]?token)"
-        r"\s*[=:]\s*[\"']?[A-Za-z0-9/+_\-]{16,}")),
-)
+from orchestrator.agent_definition import SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 
 
 def scan_snapshot_for_secrets(snapshot_dir: Path, *, max_bytes: int = 2_000_000) -> list[dict]:

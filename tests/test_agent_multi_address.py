@@ -473,7 +473,8 @@ def test_register_retries_without_google_account_on_an_older_server(monkeypatch,
     monkeypatch.setattr(agent_web, "_call", call)
     assert agent_web.register(_repo(tmp_path, email=SES, google_account=GMAIL)) == {
         "slug": "ada"}
-    assert len(bodies) == 2 and "google_account" not in bodies[1]
+    posts = [b for b in bodies if b is not None]     # GETs (the stored-agent probe) carry none
+    assert len(posts) == 2 and "google_account" not in posts[1]
 
 
 # ---- readiness reads the Google account from config ------------------------------------

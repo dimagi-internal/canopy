@@ -660,3 +660,63 @@ def test_the_clone_ends_option_parsing_before_the_url(tmp_path):
     (clone,) = [c for c in box.ran(["git"]) if "clone" in c[0]]
     argv = clone[0]
     assert argv[argv.index("--") + 1] == "https://github.com/dimagi-internal/ace.git"
+
+
+# ── stored agents: step 1 materializes instead of cloning ────────────────────────────────
+
+def _stored_prep(tmp, box, materialize, **over):
+    p = _prep(tmp, box, creds=_creds(repo_url="", definition={"source": "stored", "revision": 3,
+                                                              "root_sha256": "ab" * 32}, **over))
+    p._materialize = materialize
+    return p
+
+
+def test_a_stored_agent_is_materialized_not_cloned(tmp_path):
+    seen = []
+
+    def materialize(slug, dest):
+        seen.append((slug, dest))
+        _repo(tmp_path / "agents")              # what materialize leaves: a git dir
+        return {"slug": slug, "revision": 3, "root_sha256": "ab" * 32, "commit": "c0ffee12" * 5,
+                "changed": True}
+
+    box = Box(tmp_path)
+    rep = _stored_prep(tmp_path, box, materialize).prepare("ace")
+    assert seen == [("ace", tmp_path / "agents" / "ace")]
+    assert not [c for c in box.ran(["git"]) if "clone" in c[0] or "pull" in c[0]]
+    assert any("definition revision 3 (c0ffee12, changed)" in n for n in rep.notes)
+    assert "ace@ace" in box.plugins                   # later steps unchanged
+    assert not any("records no repository" in n for n in rep.notes)
+
+
+def test_a_stored_agent_whose_materialize_fails_keeps_its_dir(tmp_path):
+    _repo(tmp_path / "agents")
+
+    def boom(slug, dest):
+        raise RuntimeError("GET /definition/archive -> 503: down")
+
+    rep = _stored_prep(tmp_path, Box(tmp_path), boom).prepare("ace")
+    assert any(n.startswith("repo not updated: GET /definition/archive -> 503") for n in rep.notes)
+    assert rep.env_ok is True
+
+
+def test_a_stored_agent_with_no_dir_and_no_archive_fails(tmp_path):
+    def boom(slug, dest):
+        raise RuntimeError("root mismatch")
+
+    rep = _stored_prep(tmp_path, Box(tmp_path), boom).prepare("ace")
+    assert not rep.ok and any("could not materialize ace's definition: root mismatch" in n
+                              for n in rep.notes)
+
+
+def test_runner_credentials_carry_the_definition_block():
+    def transport(method, url, headers, data):
+        if url.endswith("/runtime"):
+            return 200, '{"repo_url": ""}'
+        return 200, ('{"mailbox": "a@b", "definition": {"source": "stored", "revision": 2, '
+                     '"root_sha256": "ff"}}')
+
+    c = ap.fetch_runner_credentials("ace", base_url="https://c.test", token="t",
+                                    transport=transport)
+    assert c.definition == {"source": "stored", "revision": 2, "root_sha256": "ff"}
+    assert c.repo_url == ""

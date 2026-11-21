@@ -16,6 +16,21 @@ model. Each agent is independently shippable and team-runnable; the shared frame
 lets a fleet improve together. Read `docs/agent-operating-model.md` (parts, the common-vs-agent
 boundary, invariants) if you want the why.
 
+## Repo agent or stored agent?
+
+An agent is one of two kinds; ask which when the person has not said:
+- **Repo agent** (the default, the rest of this skill): its own GitHub repo, changed by PRs; it can
+  carry hooks, scripts, MCP servers and code.
+- **Stored agent**: no repo. Its definition (skills, persona, rails, config; markdown/JSON/YAML only) lives
+  in canopy-web as revisions. Create it with
+  `canopy create-agent <slug> --mandate "<one line>" --stored --workspace <ws>` (writes nothing locally,
+  publishes revision 1). It changes by **drafts**: anyone with agent-edit, or the agent itself in a turn,
+  runs `canopy agent definition edit --slug <slug> --set <path> <file> -m "<why>"`; a human admin
+  publishes it (`canopy agent definition publish <n>` or the agent's Definition tab). People use it with
+  `canopy agent use <slug>`; runners materialize it. Skip Steps 2–5 below for a stored agent.
+  An existing repo agent moves over with `canopy agent definition convert --from <its checkout>`.
+  Contract: canopy `docs/architecture/stored-agents.md`.
+
 ## Step 1 — Gather the spec
 You need, at minimum, a **slug** (lowercase id, e.g. `sales`) and a **mandate** (one line). Ask
 the human for any you don't have; infer sensible defaults for the rest:

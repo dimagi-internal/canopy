@@ -873,3 +873,97 @@ def test_sync_runtime_refuses_a_manifest_path_that_leaves_its_root(tmp_path, man
     assert "must be" in err
     assert sorted(p.name for p in tmp_path.iterdir()) == ["cache", "clone"]
     assert list(cache.iterdir()) == []
+
+
+# ── stored agents: `canopy agent sync`, never `git fetch` ──────────────────────────────────
+
+
+def _stored_rev(n: int, skill: str) -> dict:
+    plugin = json.dumps({"name": "helper", "version": f"0.{n}.0"}).encode()
+    market = json.dumps({"name": "helper", "plugins": [{"name": "helper", "source": "./"}]}).encode()
+    return {".claude-plugin/plugin.json": (plugin, False),
+            ".claude-plugin/marketplace.json": (market, False),
+            "config/agent.json": (b"{}", False),
+            "skills/s/SKILL.md": (skill.encode(), False)}
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_update_one_syncs_a_stored_agent_instead_of_fetching(tmp_path, monkeypatch):
+    import io
+    import tarfile
+
+    from orchestrator import agent_materialize as am
+    from orchestrator.agent_definition import file_entry, manifest_root
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    registry_path = plugins_dir / "installed_plugins.json"
+    monkeypatch.setattr(flu, "PLUGINS_DIR", plugins_dir)
+    monkeypatch.setattr(flu, "REGISTRY", registry_path)
+    monkeypatch.setattr(am, "live_root", lambda slug, **kw: {})
+    live = {"n": 1, "files": _stored_rev(1, "v1")}
+
+    def fetch(url, headers):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for p, (c, x) in sorted(live["files"].items()):
+                info = tarfile.TarInfo(p)
+                info.size, info.mode = len(c), 0o755 if x else 0o644
+                tf.addfile(info, io.BytesIO(c))
+        root = manifest_root([file_entry(p, c, x) for p, (c, x) in live["files"].items()])
+        return 200, {"X-Canopy-Revision": str(live["n"]), "X-Canopy-Root-Sha256": root,
+                     "X-Canopy-Published-At": f"2026-11-2{live['n']}T00:00:00Z"}, buf.getvalue()
+
+    def sync(dest):
+        return am.materialize("helper", Path(dest), base_url="https://w", token="t", fetch=fetch,
+                              workspace="connect")
+
+    clone = plugins_dir / "marketplaces" / "helper"
+    old = sync(clone)
+    old_cache = plugins_dir / "cache" / "helper" / "helper" / "0.1.0"
+    old_cache.mkdir(parents=True)
+    registry_path.write_text(json.dumps({"plugins": {"helper@helper": [
+        {"installPath": str(old_cache), "version": "0.1.0", "gitCommitSha": old["commit"]}]}}))
+
+    calls = []
+    real_run = flu.run
+
+    def fake_run(cmd, timeout, cwd=None):
+        calls.append(cmd)
+        if cmd[0] == "CANOPY":
+            assert cmd[1:5] == ["agent", "sync", "--slug", "helper"] and cmd[5:] == ["--dest", str(clone)]
+            return 0, json.dumps(sync(cmd[6])), ""
+        return real_run(cmd, timeout, cwd)
+
+    monkeypatch.setattr(flu, "run", fake_run)
+    monkeypatch.setattr(flu, "_which", lambda name: "CANOPY" if name == "canopy" else None)
+    target = {"key": "helper@helper", "name": "helper", "marketplace": "helper",
+              "install_path": str(old_cache), "version": "0.1.0", "sha": old["commit"],
+              "clone": str(clone)}
+
+    assert flu.is_stored_clone(str(clone))
+    assert flu.update_one(target)["status"] == "up-to-date"        # nothing published since
+
+    live.update(n=2, files=_stored_rev(2, "v2"))
+    result = flu.update_one(target)
+    assert result["status"] == "updated", result
+    assert result["new_ver"] == "0.2.0"
+    new_cache = plugins_dir / "cache" / "helper" / "helper" / "0.2.0"
+    assert (new_cache / "skills" / "s" / "SKILL.md").read_text() == "v2"
+    assert not any(c[:2] == ["git", "fetch"] for c in calls)
+    entry = json.loads(registry_path.read_text())["plugins"]["helper@helper"][0]
+    assert entry["gitCommitSha"] == _rev(clone) and entry["installPath"] == str(new_cache)
+
+    # And `--refresh` (what a runner calls after its own sync) accepts the materialized HEAD.
+    assert flu.off_release_branch(str(clone)) == ""
+
+
+def test_update_one_stored_agent_without_a_cli_says_so(tmp_path, monkeypatch):
+    clone = tmp_path / "c"
+    clone.mkdir()
+    _git(clone, "init", "-b", "main")
+    _git(clone, "remote", "add", "origin", "canopy://connect/helper")
+    monkeypatch.setattr(flu, "_which", lambda name: None)
+    r = flu.update_one({"key": "helper@helper", "name": "helper", "marketplace": "helper",
+                        "install_path": "", "version": "0.1.0", "sha": "", "clone": str(clone)})
+    assert r["status"] == "error" and "no canopy CLI" in r["error"]

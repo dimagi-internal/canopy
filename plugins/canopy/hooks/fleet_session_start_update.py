@@ -509,6 +509,9 @@ def update_one(target: dict) -> dict:
         result.update(status="error", error="git not found")
         return result
 
+    if is_stored_clone(clone):
+        return _update_stored(target, result, clone)
+
     branch = _default_branch(clone)
     rc, _, err = run(["git", "fetch", "--quiet", "origin", branch], FETCH_TIMEOUT, cwd=clone)
     if rc != 0:
@@ -552,6 +555,51 @@ def update_one(target: dict) -> dict:
             result.update(status="up-to-date")
             return result
         return _update_behind(target, result, clone, branch, remote_sha)
+
+
+# ── stored agents: canopy-web, not git, is the remote ───────────────────────────────────────
+#
+# A stored agent's definition lives in canopy-web (docs/architecture/stored-agents.md); its
+# marketplace dir is a MATERIALIZED repo whose origin is `canopy://<workspace>/<slug>`, which
+# git cannot fetch. `canopy agent sync` is its `git fetch` + fast-forward: it materializes the
+# live revision (one deterministic orphan commit; HEAD == origin/main). Then the install is
+# the same build_and_swap + patch_registry as any other plugin.
+
+STORED_ORIGIN = "canopy://"
+SYNC_TIMEOUT = 120
+
+
+def is_stored_clone(clone: str) -> bool:
+    rc, url, _ = run(["git", "config", "--get", "remote.origin.url"], 10, cwd=clone)
+    return rc == 0 and url.startswith(STORED_ORIGIN)
+
+
+def _update_stored(target: dict, result: dict, clone: str) -> dict:
+    name = target["name"]
+    cli = _which("canopy")
+    if not cli:
+        result.update(status="error", error="stored agent: no canopy CLI to sync it with")
+        return result
+    rc, slug, _ = run(["git", "config", "--get", "canopy.slug"], 10, cwd=clone)
+    slug = slug if rc == 0 and slug else name
+    rc, out, err = run([cli, "agent", "sync", "--slug", slug, "--dest", clone], SYNC_TIMEOUT)
+    if rc != 0:
+        why = (err or out or str(rc)).strip().splitlines()
+        result.update(status="error", error=f"sync: {why[-1] if why else rc}"[:300])
+        return result
+    rc, head, err = run(["git", "rev-parse", "HEAD"], 10, cwd=clone)
+    if rc != 0 or not head:
+        result.update(status="error", error=f"rev-parse HEAD: {err or rc}")
+        return result
+    if head == target["sha"]:
+        result.update(status="up-to-date")
+        return result
+    with plugin_lock(name) as lock:
+        if not lock.held:
+            result.update(status="up-to-date")
+            return result
+        # Already on main at HEAD (materialize put it there): the reset is a no-op.
+        return _update_behind(target, result, clone, "main", head)
 
 
 def _update_behind(target: dict, result: dict, clone: str, branch: str, remote_sha: str) -> dict:
