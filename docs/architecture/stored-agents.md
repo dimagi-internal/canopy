@@ -1,7 +1,7 @@
 # Stored agents — the canopy side
 
 A **stored agent** has no GitHub repo. Its whole definition (skills, persona, rails, config) is a git
-repository hosted by canopy-web: a draft is proposed, a human with agent-admin publishes it, there is a
+repository hosted by canopy-web: a draft is proposed, an agent-admin publishes it (a person, or ANOTHER agent that administers it), there is a
 live revision and rollback. canopy-web's half (models, file policy, API, UI) is its
 `docs/architecture/stored-agents.md`. This page is what canopy does with it.
 
@@ -87,9 +87,14 @@ A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$C
 ## Changing one
 
 - `canopy agent definition show|files|cat <path>|diff` read it; `edit --set <path> <file> --delete <path> -m <msg>`
-  creates or replaces the single draft on the live base; `publish <n>` and `rollback <n>` are a human admin's;
-  `discard <n>`. A stored agent edits ITSELF only by proposing a draft (canopy-web files an approval to its
-  owner); it never publishes.
+  creates or replaces the single draft on the live base; `publish <n>` and `rollback <n>` are an admin's:
+  a person, or ANOTHER agent that administers the target, signed in as itself (its PAT, OAuth or turn
+  login); `discard <n>`. A stored agent edits ITSELF only by proposing a draft (canopy-web files an
+  approval to its owner and admins); it never publishes or rolls itself back, whatever its role. An agent's
+  draft of an agent it administers files no approval: it publishes it. A draft needs a person only when it
+  is the agent's own, or when the drafting agent does not administer the target. An agent that creates an
+  agent (`create-agent --stored`, or registering one) administers it, also after its ownership moves.
+  Convert, export and detach stay a person's. canopy-web's rule: its `docs/architecture/stored-agents.md`.
 - `canopy agent definition clone [--slug S] [DIR] [--no-helper]` makes a person's working copy (main, draft, tags)
   with the token sent on that command only. It sets the clone's `credential.<canopy host>.helper` to
   `canopy agent definition credential` (hidden; answers git's `get` with the canopy-web login as the Basic

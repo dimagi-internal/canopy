@@ -30,7 +30,11 @@ If your recommendation contradicts a page you have just read, say so and reconci
   GitHub repo — or, for a **stored agent**, from a git repo canopy-web hosts, which runners and
   `canopy agent use` clone (`canopy agent definition clone` gives a person a read-only working
   copy; `export --to-github` moves it to GitHub). A stored agent changes itself only by
-  proposing a draft (`canopy agent definition edit`); a human publishes it. An *instance* is canopy-web's `Agent` record: identity, workspace, vault. A local
+  proposing a draft (`canopy agent definition edit`); a person who administers it publishes it.
+  An agent's drafts need a person only for ITSELF, or when no agent that administers the target
+  publishes them: an agent that administers ANOTHER agent (the agent that created it does) drafts,
+  publishes and rolls back that agent's definition signed in as itself, recorded as "<slug> (agent)".
+  Convert, export and detach stay a person's. An *instance* is canopy-web's `Agent` record: identity, workspace, vault. A local
   install is bound to exactly ONE instance (`/<plugin>:setup`).
 - **Two ways to run an agent, both normal.** *Use it yourself* in your own Claude Code
   (`canopy agent use <slug>`, then `/<slug>:turn`), or *let it run on its own* on a runner

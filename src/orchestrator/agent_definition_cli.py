@@ -14,7 +14,8 @@
 
 A stored agent's definition is a git repository hosted by canopy-web, with revisions
 (docs/architecture/stored-agents.md). An agent, or a person with agent-edit, proposes a DRAFT
-(`edit`); a human admin publishes it. Every write is checked against the file policy here
+(`edit`); an admin publishes it: a person, or another agent that administers it (never the
+agent itself). Every write is checked against the file policy here
 first (`agent_definition.check_tree`) so the refusal names the file before anything is
 uploaded; canopy-web is the authority. The repo is read with ordinary git (`clone`); nobody
 pushes to it — canopy-web is its only writer.
@@ -148,7 +149,8 @@ def definition_diff(slug, revision, against):
 @click.option("--base", default="live", show_default=True,
               help="The revision the draft builds on; canopy-web refuses a base that is not live.")
 def definition_edit(slug, sets, deletes, message, base):
-    """Create or replace the single DRAFT. A human admin publishes it."""
+    """Create or replace the single DRAFT. An admin publishes it: a person, or another agent that
+    administers it."""
     if not sets and not deletes:
         raise click.ClickException("nothing to change: pass --set PATH FILE or --delete PATH")
     changes, check = [], {}
