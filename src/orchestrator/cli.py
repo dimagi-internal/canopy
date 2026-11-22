@@ -1362,8 +1362,16 @@ def _print_cycle_result(result: dict) -> None:
                    "the factory and publishes it as revision 1. Writes nothing locally. "
                    "Needs --workspace (or CANOPY_WEB_WORKSPACE).")
 @click.option("--workspace", default="", help="With --stored: the canopy-web workspace.")
+@click.option("--from", "from_dir", default=None, type=click.Path(exists=True, file_okay=False),
+              help="With --stored: a local git repo whose TRACKED files are laid over the "
+                   "scaffold as revision 1 (files canopy-web writes itself are left out).")
+@click.option("--with-history", is_flag=True,
+              help="With --from: keep the repo's history too (`git bundle create - main`).")
+@click.option("--drop-refused", is_flag=True,
+              help="With --from: leave out files the stored-agent file policy refuses instead "
+                   "of stopping; the ones left out are listed.")
 def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders, target, force,
-                     git_init, stored, workspace):
+                     git_init, stored, workspace, from_dir, with_history, drop_refused):
     """Scaffold a new Claude Code agent from the canopy operating model.
 
     Generates an agent repo (persona, the `turn` orchestrator, reads-free / writes-gated
@@ -1374,7 +1382,9 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
     With --stored the same factory output is created IN canopy-web instead (POST
     /api/agents/stored): no repo, no push, no `agent-publish register`. Change it with
     `canopy agent definition edit`; use it with `canopy agent use <slug>`
-    (docs/architecture/stored-agents.md).
+    (docs/architecture/stored-agents.md). --stored --from DIR creates it WITH DIR's tracked
+    files in the same call (--with-history keeps main's history; --drop-refused leaves out
+    what the file policy refuses).
     """
     import subprocess
     from canopy_agent_factory import (
@@ -1387,6 +1397,10 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
         raise click.ClickException(str(e))
 
     display = name or slug.replace("-", " ").title()
+    if not stored and (from_dir or with_history or drop_refused):
+        raise click.ClickException("--from, --with-history and --drop-refused go with --stored")
+    if not from_dir and (with_history or drop_refused):
+        raise click.ClickException("--with-history and --drop-refused go with --from DIR")
     if stored:
         import json as _json
 
@@ -1398,13 +1412,41 @@ def create_agent_cmd(slug, name, mandate, mailbox, google_account, stakeholders,
         body = {"name": display, "slug": slug, "mandate": mandate.strip(), "workspace": ws}
         if stakeholders:
             body["stakeholders"] = stakeholders
+        summary = None
+        if from_dir:
+            from orchestrator import agent_definition_cli as dc
+            repo = Path(from_dir).expanduser().resolve()
+            summary, upload = dc.repo_upload(repo, slug, drop_refused=drop_refused,
+                                             with_history=with_history)
+            body.update(upload)
+            body["drop_refused"] = drop_refused
+            body["message"] = f"Created from {repo.name}"
         try:
             out = canopy_web.call("POST", "/api/agents/stored", body)
         except (canopy_web.CanopyError, RuntimeError, OSError) as e:
+            if from_dir:
+                raise dc.stored_create_error(e, slug, with_history=with_history)
             raise click.ClickException(str(e))
         click.echo(_json.dumps(out))
-        click.echo(f"Created stored agent {display} ({slug}) in workspace {ws} — revision 1, "
-                   "published. Nothing was written here.", err=True)
+        out = out if isinstance(out, dict) else {}
+        if from_dir and "dropped" not in out:
+            raise click.ClickException(
+                f"canopy-web created {slug} but did not report taking its files, so revision "
+                f"{out.get('revision', 1)} is likely the bare scaffold. " + dc.TOO_OLD)
+        click.echo(f"Created stored agent {display} ({slug}) in workspace {ws} — revision "
+                   f"{out.get('revision', 1)}, published. Nothing was written here.", err=True)
+        if out.get("root_sha256") or out.get("owner"):
+            click.echo(f"  root {out.get('root_sha256') or '?'}, owner "
+                       f"{out.get('owner') or '?'}", err=True)
+        if summary is not None:
+            click.echo(f"  {len(summary['upload'])} files from {from_dir}"
+                       + (f", with {summary['history_bundle_bytes']} bytes of history"
+                          if with_history else ""), err=True)
+            left_out = summary["refused"] if drop_refused else []
+            for line in left_out:
+                click.echo(f"  left out here: {line}", err=True)
+            for path in out.get("dropped") or []:
+                click.echo(f"  dropped by canopy-web: {path}", err=True)
         click.echo("Next: `canopy agent definition files --slug " + slug + "`, edit with "
                    "`canopy agent definition edit`, use it with `canopy agent use " + slug + "`.",
                    err=True)

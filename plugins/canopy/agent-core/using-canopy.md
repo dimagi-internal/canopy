@@ -47,7 +47,7 @@ If your recommendation contradicts a page you have just read, say so and reconci
 | Who can do what; licences; turn modes | canopy-web [access.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/access.md), [roles.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/roles.md) | `who_is_asking`, `canopy agent read-mode get --slug <slug>`, `canopy agent sites list --slug <slug>` |
 | Runners, schedules, routing | canopy-web [runners.md](https://github.com/dimagi-internal/canopy-web/blob/main/docs/architecture/runners.md) | `canopy agent doctor`, the runner list |
 | Setting up / vaults / device grants | `docs/architecture/agent-setup-lifecycle.md` | `canopy agent doctor`, the agent's vault members |
-| Stored agents (repo hosted by canopy-web): drafts, publish, rollback, clone, convert/export | `docs/architecture/stored-agents.md` | `canopy agent definition show --slug <slug>`, `canopy agent definition --help` |
+| Stored agents (repo hosted by canopy-web): create (with files: `--from`), drafts, publish, rollback, clone, convert/export | `docs/architecture/stored-agents.md` | `canopy create-agent <slug> --stored --workspace <ws> --from <dir>`, `canopy agent definition show --slug <slug>`, `canopy agent definition --help` |
 | Words used here (plugin, instance, runner, local turn…) | `docs/GLOSSARY.md` | — |
 | How this repo's docs are kept honest | `docs/documentation.md` | — |
 

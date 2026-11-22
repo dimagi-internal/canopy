@@ -6,7 +6,7 @@ the logic that needs a person's machine (a terminal); a box runs the same code a
 
 | Stage | The one implementation | Entry points that call it |
 |---|---|---|
-| Create the repo | `canopy_agent_factory` (templates + push); a STORED agent has none (canopy-web renders the factory into revision 1) | canopy-web New-agent page; `/canopy:create-agent`; `canopy create-agent --stored` |
+| Create the repo | `canopy_agent_factory` (templates + push); a STORED agent has none (canopy-web renders the factory into revision 1) | canopy-web New-agent page; `/canopy:create-agent`; `canopy create-agent --stored [--from DIR]` |
 | What's left to do | canopy-web `apps/agents/setup.py` (`GET /api/agents/<slug>/setup`) | Settings page, create wizard, `/canopy:create-agent` (MCP `agent_setup`) |
 | Vault + its values | **canopy vault** (canopy-web; zero-knowledge: `canopy vault zk`, `vault_zk_cli.py`) | the agent's Settings → Security tab; the checklist's Vault step; `/canopy:create-agent` |
 | A device's access to the vault | canopy-web's pending grants (`GET …/vault/zk`), granted with a holder's key | **Grant pending** on `/agents/<slug>`, then **Give them access** (Settings → Security); `canopy vault zk grant --agent X`; `canopy agent use <slug>` says when one is missing |
