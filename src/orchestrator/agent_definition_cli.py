@@ -430,6 +430,22 @@ def definition_credential(operation):
 _GITHUB_REPO = r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$"
 
 
+def _github_token() -> str:
+    """The person's own GitHub token, for canopy-web's one push: GH_TOKEN, GITHUB_TOKEN, else
+    `gh auth token`. Sent only in the export request body; never printed or stored."""
+    import os
+    import subprocess
+
+    for var in ("GH_TOKEN", "GITHUB_TOKEN"):
+        if os.environ.get(var, "").strip():
+            return os.environ[var].strip()
+    try:
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 @definition.command("export")
 @_slug_opt
 @click.option("--to-github", "repo", required=True, metavar="OWNER/NAME",
@@ -437,7 +453,7 @@ _GITHUB_REPO = r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$"
 @click.option("--ref", default="main", show_default=True, help="The branch to write there.")
 @click.option("--push-myself", is_flag=True,
               help="Push with YOUR git credentials from here, then tell canopy-web (detach); "
-                   "otherwise canopy-web pushes with the agent's GitHub delegation.")
+                   "otherwise canopy-web pushes once with your GitHub token (GH_TOKEN or gh).")
 def definition_export(slug, repo, ref, push_myself):
     """Move a STORED agent to GitHub with its whole history (main + the r<N> tags).
 
@@ -450,8 +466,13 @@ def definition_export(slug, repo, ref, push_myself):
     if not re.match(_GITHUB_REPO, repo):
         raise click.ClickException(f"--to-github takes OWNER/NAME, not {repo!r}")
     if not push_myself:
+        token = _github_token()
+        if not token:
+            raise click.ClickException(
+                "canopy-web pushes with YOUR GitHub token (it holds no readable copy of the "
+                "agent's): set GH_TOKEN, or sign in with `gh auth login`; or use --push-myself")
         click.echo(json.dumps(_call("POST", f"{_base(slug)}/export",
-                                    {"repo": repo, "ref": ref}), indent=1))
+                                    {"repo": repo, "ref": ref, "github_token": token}), indent=1))
         return
     gh = f"https://github.com/{repo}.git"
     r = _run_git("ls-remote", gh)

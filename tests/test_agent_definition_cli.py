@@ -259,12 +259,25 @@ def test_a_helper_clone_pulls_with_plain_git(gitsrv, tmp_path, monkeypatch):
     assert any(s["auth"].startswith("Basic ") for s in gitsrv.seen)
 
 
-def test_export_calls_the_route(web):
+def test_export_calls_the_route_with_the_persons_github_token(web, monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "gho_persons_own")
     res = cli("agent", "definition", "export", "--slug", "helper", "--to-github",
               "https://github.com/dimagi-internal/helper.git")
     assert res.exit_code == 0, res.output
     assert ("POST", "/api/agents/helper/definition/export",
-            {"repo": "dimagi-internal/helper", "ref": "main"}) in web.calls
+            {"repo": "dimagi-internal/helper", "ref": "main",
+             "github_token": "gho_persons_own"}) in web.calls
+    assert "gho_persons_own" not in res.output
+
+
+def test_export_without_a_github_token_points_at_push_myself(web, monkeypatch):
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")  # no `gh` to ask
+    res = CliRunner().invoke(main, ["agent", "definition", "export", "--slug", "helper",
+                                    "--to-github", "o/helper"])
+    assert res.exit_code != 0 and "--push-myself" in res.output
+    assert not any(c[1].endswith("/export") for c in web.calls)
 
 
 def test_export_refuses_a_bad_repo_name(web):

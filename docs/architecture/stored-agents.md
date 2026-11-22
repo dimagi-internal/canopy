@@ -108,8 +108,10 @@ A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$C
   tip. A body above ~2.4 MB (canopy-web's 2.5 MB request cap) is refused client-side, and a server 413 likewise,
   both with the files-only hint. `--dry-run` prints the plan (with the bundle's size).
 - **Out:** `canopy agent definition export --to-github OWNER/NAME [--ref main]` calls
-  `POST /definition/export {repo, ref}`: canopy-web pushes main + the `r<N>` tags to the EMPTY repo with the agent's
-  GitHub delegation and switches the agent to `source=repo`. `--push-myself` does the push from here instead: it
+  `POST /definition/export {repo, ref, github_token}`: canopy-web pushes main + the `r<N>` tags to the EMPTY repo
+  with the person's own GitHub token (from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`; used for that one push, never
+  stored or printed; canopy-web holds no readable copy of the agent's delegation) and switches the agent to
+  `source=repo`. `--push-myself` does the push from here instead: it
   checks the repo is empty (`git ls-remote` with your git credentials), bare-clones the canopy repo (token on that
   command only), pushes `main` + tags with YOUR git credentials (no canopy header), then calls
   `POST /definition/detach {repo_url}`. Either way the canopy repo stays as a read-only archive; runners and the
