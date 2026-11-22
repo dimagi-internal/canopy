@@ -26,8 +26,10 @@ An agent is one of two kinds; ask which when the person has not said:
   `canopy create-agent <slug> --mandate "<one line>" --stored --workspace <ws>` (writes nothing locally,
   publishes revision 1). Add `--from <dir>` to create it WITH a local repo's tracked files in the same call
   (`--with-history` keeps its `main` history; `--drop-refused` leaves out what the file policy refuses). It changes by **drafts**: anyone with agent-edit, or the agent itself in a turn,
-  runs `canopy agent definition edit --slug <slug> --set <path> <file> -m "<why>"`; a human admin
-  publishes it (`canopy agent definition publish <n>` or the agent's Definition tab). People use it with
+  runs `canopy agent definition edit --slug <slug> --set <path> <file> -m "<why>"`; an admin
+  publishes it (`canopy agent definition publish <n>` or the agent's Definition tab): a person, or
+  ANOTHER agent that administers it, signed in as itself. An agent that creates an agent administers
+  it, so it publishes its own creations; it never publishes itself. People use it with
   `canopy agent use <slug>`; runners materialize it. Skip Steps 2–5 below for a stored agent.
   An existing repo agent moves over with `canopy agent definition convert --from <its checkout>`.
   Contract: canopy `docs/architecture/stored-agents.md`.
