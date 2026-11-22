@@ -3,9 +3,10 @@ name: Hook Python compatibility
 # Hooks run under whatever python3 is on the user's PATH — often Xcode CLT
 # python3.9 on macOS, not the project venv. A 3.10+-only annotation in hook
 # code (e.g. `str | None` PEP 604 union) compiles fine in CI under our
-# pyproject-pinned python3.11 but silently no-ops on real user machines.
+# python3.13 but silently no-ops on real user machines.
 # Catch that class of regression here by py_compile-ing every hook under each
-# supported user python.
+# supported user python: 3.9 (macOS CLT), 3.11/3.12 (older brew, Ubuntu 24.04's
+# system python3), and 3.13 (the fleet's own Python).
 #
 # `plugins/canopy/agent-core/*.py` is in scope because that is where the FLEET
 # engines live — `gating_guard.py` and `gdoc_gate.py` are exec'd by every
@@ -24,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04  # Ubuntu 26.04 has no Python 3.9, and macOS system Python 3.9 is what this guards
     strategy:
       matrix:
-        python-version: ['3.9', '3.11', '3.12']
+        python-version: ['3.9', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
