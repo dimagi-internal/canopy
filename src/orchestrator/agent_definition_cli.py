@@ -8,12 +8,16 @@
     canopy agent definition publish <n>
     canopy agent definition discard <n>
     canopy agent definition rollback <n>
-    canopy agent definition convert --from <dir> [-m <msg>] [--drop-refused] [--dry-run]
+    canopy agent definition convert --from <dir> [-m <msg>] [--drop-refused] [--with-history] [--dry-run]
+    canopy agent definition clone [--slug S] [DIR] [--no-helper]
+    canopy agent definition export --to-github OWNER/NAME [--ref main] [--push-myself]
 
-A stored agent's definition is a file tree with revisions (docs/architecture/stored-agents.md).
-An agent, or a person with agent-edit, proposes a DRAFT (`edit`); a human admin publishes it.
-Every write is checked against the file policy here first (`agent_definition.check_tree`) so
-the refusal names the file before anything is uploaded; canopy-web is the authority.
+A stored agent's definition is a git repository hosted by canopy-web, with revisions
+(docs/architecture/stored-agents.md). An agent, or a person with agent-edit, proposes a DRAFT
+(`edit`); a human admin publishes it. Every write is checked against the file policy here
+first (`agent_definition.check_tree`) so the refusal names the file before anything is
+uploaded; canopy-web is the authority. The repo is read with ordinary git (`clone`); nobody
+pushes to it — canopy-web is its only writer.
 """
 from __future__ import annotations
 
@@ -229,6 +233,26 @@ def plan_convert(repo: Path, slug: str) -> dict:
     return {"upload": upload, "generated": generated, "refused": refused}
 
 
+#: canopy-web's request cap (Django DATA_UPLOAD_MAX_MEMORY_SIZE, 2.5 MB) less slack: a convert
+#: body above this is refused here rather than by a 413.
+MAX_CONVERT_BODY = 2_400_000
+
+
+def history_bundle(repo: Path) -> bytes:
+    """`git bundle create - main` of ``repo``: its main branch with all its history."""
+    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "-q",
+                        "refs/heads/main"], capture_output=True, timeout=60)
+    if r.returncode != 0:
+        raise click.ClickException(f"{repo} has no `main` branch to carry the history of — "
+                                   "convert files-only (without --with-history)")
+    r = subprocess.run(["git", "-C", str(repo), "bundle", "create", "-", "main"],
+                       capture_output=True, timeout=300)
+    if r.returncode != 0 or not r.stdout:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        raise click.ClickException(f"git bundle create: {err.splitlines()[-1] if err else r.returncode}")
+    return r.stdout
+
+
 @definition.command("convert")
 @click.option("--from", "from_dir", required=True, type=click.Path(exists=True, file_okay=False),
               help="A local checkout of the agent's repo; its TRACKED files are uploaded.")
@@ -237,13 +261,17 @@ def plan_convert(repo: Path, slug: str) -> dict:
 @click.option("--drop-refused", is_flag=True,
               help="Leave out files the policy refuses (workflows, scripts, .py tests) instead "
                    "of stopping.")
+@click.option("--with-history", is_flag=True,
+              help="Keep the repo's history: send `git bundle create - main` too. canopy-web "
+                   "imports it (refs/heads/imported) and revision 1's parent is its tip.")
 @click.option("--dry-run", is_flag=True, help="Print the plan; upload nothing.")
-def definition_convert(from_dir, slug, message, drop_refused, dry_run):
+def definition_convert(from_dir, slug, message, drop_refused, with_history, dry_run):
     """Turn a REPO agent into a STORED one: its tracked files become revision 1 (published).
 
     Files canopy-web writes itself (.claude-plugin/*, .claude/settings.json,
     bin/<slug>-email, .gitignore) are not uploaded; it rewrites them. Afterwards the agent
-    has no repo_url, and runners and `canopy agent use` materialize it from canopy-web."""
+    has no repo_url, and runners and `canopy agent use` clone it from canopy-web.
+    --with-history keeps main's history (within canopy-web's ~1.8 MB request limit)."""
     repo = Path(from_dir).expanduser().resolve()
     if not slug:
         try:
@@ -258,6 +286,9 @@ def definition_convert(from_dir, slug, message, drop_refused, dry_run):
                "generated_by_canopy_web": plan["generated"],
                "refused": [f"{p}: {why}" for p, why in plan["refused"]],
                "problems": problems}
+    bundle = history_bundle(repo) if with_history else b""
+    if with_history:
+        summary["history_bundle_bytes"] = len(bundle)
     if dry_run:
         click.echo(json.dumps(summary, indent=1))
         return
@@ -269,6 +300,177 @@ def definition_convert(from_dir, slug, message, drop_refused, dry_run):
             "leave them out):\n  " + "\n  ".join(summary["refused"]))
     files = [{"path": f["path"], "content_b64": base64.b64encode(f["content"]).decode("ascii"),
               "executable": False} for f in plan["upload"]]
-    out = _call("POST", f"/api/agents/{slug}/definition/convert",
-                {"files": files, "message": message})
+    body = {"files": files, "message": message}
+    if with_history:
+        body["bundle_b64"] = base64.b64encode(bundle).decode("ascii")
+    size = len(json.dumps(body))
+    if size > MAX_CONVERT_BODY:
+        why = ("the history makes it " if with_history else "")
+        raise click.ClickException(
+            f"the conversion is {size / 1e6:.1f} MB; canopy-web takes about "
+            f"{MAX_CONVERT_BODY / 1e6:.1f} MB — {why}too large"
+            + (": convert files-only (drop --with-history)" if with_history else ""))
+    try:
+        out = canopy_web.call("POST", f"/api/agents/{slug}/definition/convert", body)
+    except _ERRORS as e:
+        if with_history and "-> 413" in str(e):
+            raise click.ClickException(f"{e}\ncanopy-web refused the history as too large: "
+                                       "convert files-only (drop --with-history)")
+        raise click.ClickException(str(e))
     click.echo(json.dumps({**summary, "result": out}, indent=1))
+
+
+# ── reading the repo with git ───────────────────────────────────────────────────────────
+
+def _git_url(slug: str, token: str) -> str:
+    from orchestrator import agent_materialize as am
+
+    base = canopy_web.resolve_base_url(None)
+    info = am.definition_info(slug, base_url=base, token=token)
+    if str(info.get("source") or "") == "repo" and not info.get("git_url"):
+        raise click.ClickException(f"{slug} is not a stored agent"
+                                   + (f": its repo is {info['repo_url']}" if info.get("repo_url")
+                                      else ""))
+    url = str(info.get("git_url") or "")
+    if not url and info.get("workspace"):
+        url = am.git_url_for(base, str(info["workspace"]), slug)
+    if not url:
+        raise click.ClickException(f"canopy-web gave no git url for {slug}")
+    return url
+
+
+def _person_token() -> str:
+    try:
+        return canopy_web.resolve_token(None)
+    except RuntimeError as e:
+        raise click.ClickException(f"no canopy-web login: {e}")
+
+
+def _helper_command() -> str:
+    import shutil
+
+    exe = shutil.which("canopy") or "canopy"
+    return f"!{json.dumps(exe)} agent definition credential"
+
+
+def _run_git(*args: str, auth=None, cwd=None, timeout: int = 600) -> subprocess.CompletedProcess:
+    from orchestrator.agent_materialize import auth_env
+
+    env = auth_env(*auth) if auth else None
+    try:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, env=env, cwd=cwd,
+                           timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise click.ClickException(f"git {args[0]}: {e}")
+    return r
+
+
+def _git_fail(r: subprocess.CompletedProcess, what: str) -> click.ClickException:
+    lines = [ln for ln in (r.stderr or r.stdout or "").splitlines() if ln.strip()]
+    return click.ClickException(f"{what}: {lines[-1] if lines else r.returncode}")
+
+
+@definition.command("clone")
+@click.option("--slug", envvar="CANOPY_AGENT", required=True,
+              help="The stored agent. Default: $CANOPY_AGENT.")
+@click.argument("directory", required=False, type=click.Path(file_okay=False))
+@click.option("--no-helper", is_flag=True,
+              help="Do not set the clone's credential helper (then pass it per command).")
+def definition_clone(slug, directory, no_helper):
+    """A working copy of a STORED agent's repo (main, the draft, the r<N> tags).
+
+    Read-only: canopy-web refuses every push — propose a change with
+    `canopy agent definition edit`. Your token is sent with the clone and never written to
+    the repo; later pulls ask `canopy agent definition credential` for it each time."""
+    token = _person_token()
+    url = _git_url(slug, token)
+    dest = Path(directory or slug).expanduser()
+    if dest.exists() and any(dest.iterdir()):
+        raise click.ClickException(f"{dest} exists and is not empty")
+    r = _run_git("clone", "--quiet", "--", url, str(dest), auth=(url, token))
+    if r.returncode != 0:
+        raise _git_fail(r, f"git clone {url}")
+    from orchestrator.agent_materialize import _host_of
+
+    helper_key = f"credential.{_host_of(url).rstrip('/')}.helper"
+    if not no_helper:
+        _run_git("-C", str(dest), "config", helper_key, _helper_command())
+    click.echo(f"Cloned {slug} into {dest} (origin {url}).")
+    if no_helper:
+        click.echo(f"To pull later: git -C {dest} -c {helper_key}='{_helper_command()}' pull")
+    else:
+        click.echo(f"To pull later: git -C {dest} pull — git asks `canopy agent definition "
+                   "credential` for your canopy token each time; nothing is stored.")
+    click.echo("The repo is read-only: change it with `canopy agent definition edit`.")
+
+
+@definition.command("credential", hidden=True)
+@click.argument("operation")
+def definition_credential(operation):
+    """A git credential helper for canopy's git repos: answers `get` with the canopy-web
+    login as the password (the server takes Basic with the token as password). The token
+    is read when git asks and never stored; `store`/`erase` do nothing."""
+    import sys
+
+    if operation != "get":
+        return
+    fields = dict(line.split("=", 1) for line in sys.stdin.read().splitlines() if "=" in line)
+    from urllib.parse import urlsplit
+
+    base = urlsplit(canopy_web.resolve_base_url(None))
+    if fields.get("protocol") != base.scheme or fields.get("host") != base.netloc:
+        return
+    try:
+        token = canopy_web.resolve_token(None)
+    except RuntimeError:
+        return
+    click.echo(f"username=canopy\npassword={token}")
+
+
+_GITHUB_REPO = r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$"
+
+
+@definition.command("export")
+@_slug_opt
+@click.option("--to-github", "repo", required=True, metavar="OWNER/NAME",
+              help="An EMPTY GitHub repo (create it first).")
+@click.option("--ref", default="main", show_default=True, help="The branch to write there.")
+@click.option("--push-myself", is_flag=True,
+              help="Push with YOUR git credentials from here, then tell canopy-web (detach); "
+                   "otherwise canopy-web pushes with the agent's GitHub delegation.")
+def definition_export(slug, repo, ref, push_myself):
+    """Move a STORED agent to GitHub with its whole history (main + the r<N> tags).
+
+    Afterwards it is a repo agent (source=repo, repo_url=the GitHub repo); the canopy repo
+    stays as a read-only archive. A person who administers the agent only."""
+    import re
+    import tempfile
+
+    repo = repo.strip().removeprefix("https://github.com/").removesuffix(".git").strip("/")
+    if not re.match(_GITHUB_REPO, repo):
+        raise click.ClickException(f"--to-github takes OWNER/NAME, not {repo!r}")
+    if not push_myself:
+        click.echo(json.dumps(_call("POST", f"{_base(slug)}/export",
+                                    {"repo": repo, "ref": ref}), indent=1))
+        return
+    gh = f"https://github.com/{repo}.git"
+    r = _run_git("ls-remote", gh)
+    if r.returncode != 0:
+        raise _git_fail(r, f"cannot read {gh} with your git credentials (create the empty "
+                           "repo first)")
+    if r.stdout.strip():
+        raise click.ClickException(f"{gh} is not empty — export needs an empty repo")
+    token = _person_token()
+    url = _git_url(slug, token)
+    with tempfile.TemporaryDirectory(prefix=f"canopy-export-{slug}-") as tmp:
+        mirror = str(Path(tmp) / "repo.git")
+        r = _run_git("clone", "--quiet", "--bare", "--", url, mirror, auth=(url, token))
+        if r.returncode != 0:
+            raise _git_fail(r, f"git clone {url}")
+        # Your own credentials: no canopy header on this command.
+        r = _run_git("-C", mirror, "push", gh, f"refs/heads/main:refs/heads/{ref}",
+                     "refs/tags/*:refs/tags/*")
+        if r.returncode != 0:
+            raise _git_fail(r, f"git push {gh}")
+    click.echo(json.dumps(_call("POST", f"{_base(slug)}/detach",
+                                {"repo_url": f"https://github.com/{repo}"}), indent=1))

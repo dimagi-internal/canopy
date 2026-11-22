@@ -1,15 +1,15 @@
 """A stored agent's definition: the manifest root and the file policy, client side.
 
-A **stored agent** keeps its whole definition in canopy-web as a file tree with revisions
-(no GitHub repo); runners and laptops materialize the live revision into a local git repo
-(`agent_materialize.py`). Contract: docs/architecture/stored-agents.md.
+A **stored agent** keeps its whole definition in a git repo canopy-web hosts, with revisions
+(no GitHub repo); runners and laptops clone it (`agent_materialize.py`). Contract:
+docs/architecture/stored-agents.md.
 
 VENDORED. canopy-web's SDK ships the same two helpers as
 ``canopy_sdk.agent_definition.manifest_root`` / ``check_tree``; this repo does not depend
 on the SDK, so a copy lives here. ``manifest_root`` MUST stay byte-for-byte the SDK's
-serialization — a materialized tree is refused when its root does not match the
-``X-Canopy-Root-Sha256`` canopy-web sends, so a drift here makes every stored agent
-unpreparable. `tests/test_agent_definition.py` pins it with a fixed vector.
+serialization — canopy recomputes a checkout's ``root_sha256`` from its commit's tree and
+reports it next to canopy-web's, so a drift here makes the two disagree.
+`tests/test_agent_definition.py` pins it with a fixed vector.
 
 ``check_tree`` is a PRE-CHECK only (so `canopy agent definition edit|convert` can say what
 will be refused before uploading); canopy-web enforces the policy on every write and is the

@@ -1,84 +1,257 @@
-"""Materialize a stored agent's revision into a local git repo with ONE deterministic commit.
+"""Bring a stored agent's definition into a local git repo: a clone of canopy-web's git repo.
 
     canopy agent materialize --slug <slug> --dest <dir> [--revision N|live] [--runner]
     canopy agent sync --slug <slug> [--runner] [--dest <dir>]
 
-A stored agent has no GitHub repo: its definition is a file tree with revisions in
-canopy-web (docs/architecture/stored-agents.md). Everything downstream of "a git clone at
+A stored agent has no GitHub repo: its definition is a git repository HOSTED by canopy-web
+(docs/architecture/stored-agents.md), served read-only over smart HTTP at
+``<canopy base>/git/<workspace>/<slug>.git``. ``refs/heads/main`` is the live revision and
+``refs/tags/r<N>`` marks published revision N. Everything downstream of "a git clone at
 AGENT_ROOT/<slug>" — worktrees, `claude plugin marketplace add <dir>`, the fleet updater's
-`refresh_plugin` / `off_release_branch` — keeps working because this module turns the
-revision into exactly that:
+`refresh_plugin` / `off_release_branch` — keeps working because the dest IS such a clone:
 
-  * fetch ``GET /api/agents/<slug>/definition/archive?revision=N|live`` (a gzip tar, files
-    only) with headers X-Canopy-Revision / X-Canopy-Root-Sha256 / X-Canopy-Published-At;
-  * verify the root (``agent_definition.manifest_root``) BEFORE anything is written;
-  * write the blobs, a tree and one ORPHAN commit into the dest's object store — author and
-    committer ``canopy <agents@canopy.dimagi.com>``, both dates = Published-At, message
-    ``canopy revision <N>`` — so one revision is one sha on every machine;
-  * point ``refs/remotes/origin/main`` at it (so `off_release_branch` passes), origin's url at
-    ``canopy://<workspace>/<slug>`` (never fetched by git), and only then swap the working tree
-    with ``git reset --hard``: tracked files replaced exactly, tracked files absent from the
-    revision deleted, untracked and ignored files (``.env``, ``node_modules``, state) kept.
-    A dest that does not exist yet is built in a sibling staging dir and renamed into place.
+  * origin = the canopy git url (``definition.git_url`` from canopy-web);
+  * ``git fetch`` with the token passed for that one command only — never written to
+    ``.git/config`` or put in the url (`auth_env`);
+  * ``git reset --hard origin/main`` (or ``r<N>``): tracked files replaced exactly, tracked
+    files absent from the revision deleted, untracked and ignored files (``.env``,
+    ``node_modules``, state) kept. A dest that does not exist yet is built in a sibling
+    staging dir and renamed into place.
 
-Nothing is written when the download or the root check fails, and nothing at all when the
-dest is already at that revision (the JSON line then says ``"changed": false``).
+A dest materialized by the old archive writer (origin ``canopy://<ws>/<slug>``, one orphan
+commit) is converted in place: origin is pointed at the git url, fetched, reset. An agent
+that was EXPORTED to GitHub (``source: repo``) has its dir's origin pointed at that repo
+instead, and the caller's ordinary repo path takes over.
+
+Nothing in the working tree changes when the fetch fails, and nothing at all when the dest
+is already at the revision (the JSON line then says ``"changed": false``).
 """
 from __future__ import annotations
 
-import datetime as dt
-import email.utils
-import io
 import os
+import re
 import shutil
 import subprocess
-import tarfile
 import tempfile
-import urllib.error
 import urllib.parse
-import urllib.request
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 from orchestrator import canopy_web
-from orchestrator.agent_definition import file_entry, manifest_root, path_problem
+from orchestrator.agent_definition import file_entry, manifest_root
 
-AUTHOR = "canopy"
-AUTHOR_EMAIL = "agents@canopy.dimagi.com"
+#: The origin of a dir written by the archive writer: recognised, so such a dir is
+#: converted in place rather than refused.
 ORIGIN_SCHEME = "canopy://"
-#: A tar bigger than this (decompressed) is refused before it is read — the policy caps a
-#: tree at 200 files / 2 MB; twice that is slack, not an invitation.
-MAX_ARCHIVE_FILES = 400
-MAX_ARCHIVE_BYTES = 4 * 1024 * 1024
-
-#: (url, headers) -> (status, {lower-case header: value}, body bytes). Raises OSError when
-#: there is no answer at all.
-Fetch = Callable[[str, dict], "tuple[int, dict, bytes]"]
+GIT_PATH = "/git/"
+GIT_TIMEOUT = 300
+_GIT_URL_RE = re.compile(r"^https?://[^/]+(/[^?#]*)?/git/[^/]+/[^/]+\.git/?$")
 
 
 class MaterializeError(RuntimeError):
-    """The revision could not be fetched, verified or written. Nothing was changed."""
+    """The definition could not be fetched or checked out. The working tree is unchanged."""
 
 
-@dataclass
-class Archive:
-    revision: int
-    root_sha256: str
-    published_at: str
-    files: dict = field(default_factory=dict)   # path -> (bytes, executable)
-    workspace: str = ""
+class ExportedAgent(MaterializeError):
+    """The agent's definition lives in a repo (``source: repo``), not in canopy-web."""
+
+    def __init__(self, slug: str, repo_url: str):
+        super().__init__(f"{slug} is not a stored agent: its definition lives at "
+                         f"{repo_url or 'a repository'} — clone or pull that instead")
+        self.repo_url = repo_url
 
 
-# ── fetching ─────────────────────────────────────────────────────────────────────────────
+# ── urls ────────────────────────────────────────────────────────────────────────────────
 
-def urllib_fetch(url: str, headers: dict) -> "tuple[int, dict, bytes]":
-    req = urllib.request.Request(url, headers=headers, method="GET")
+def git_url_for(base_url: str, workspace: str, slug: str) -> str:
+    return f"{base_url.rstrip('/')}{GIT_PATH}{workspace}/{slug}.git"
+
+
+def is_canopy_git_url(url: str, base_url: Optional[str] = None) -> bool:
+    """Whether ``url`` is a stored agent's canopy git url: it starts with the canopy base +
+    ``/git/`` (or is the legacy ``canopy://``)."""
+    url = (url or "").strip()
+    return url.startswith(ORIGIN_SCHEME) or url.startswith(
+        canopy_web.resolve_base_url(base_url) + GIT_PATH)
+
+
+def _host_of(url: str) -> str:
+    """``scheme://host[:port]/`` — what the auth header is scoped to, so a redirect to any
+    other host never carries it."""
+    p = urllib.parse.urlsplit(url)
+    return f"{p.scheme}://{p.netloc}/"
+
+
+# ── git with a token, for one command ───────────────────────────────────────────────────
+
+def auth_env(url: str, token: str, env: Optional[dict] = None) -> dict:
+    """The environment for ONE git command that talks to ``url`` as ``token``.
+
+    The token rides ``http.<host>/.extraHeader`` = ``Authorization: Bearer <token>``, set
+    through git's command-scoped config (GIT_CONFIG_COUNT / _KEY_n / _VALUE_n, the
+    environment form of ``git -c``): it is never written to ``.git/config`` or the url, and
+    unlike ``-c`` it is not in the process's argv for ``ps`` to show. Credential helpers
+    and the terminal prompt are off for that command, so a refusal fails rather than asks.
+    """
+    base = dict(os.environ if env is None else env)
     try:
-        with urllib.request.urlopen(req, timeout=canopy_web.request_timeout(None) + 60) as resp:
-            return resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read()
+        n = int(base.get("GIT_CONFIG_COUNT") or 0)
+    except ValueError:
+        n = 0
+    pairs = [("credential.helper", "")]
+    if token:
+        pairs.insert(0, (f"http.{_host_of(url)}.extraHeader", f"Authorization: Bearer {token}"))
+    for i, (k, v) in enumerate(pairs, start=n):
+        base[f"GIT_CONFIG_KEY_{i}"] = k
+        base[f"GIT_CONFIG_VALUE_{i}"] = v
+    base["GIT_CONFIG_COUNT"] = str(n + len(pairs))
+    base["GIT_TERMINAL_PROMPT"] = "0"
+    return base
+
+
+def _git(repo: Optional[Path], *args: str, auth: "Optional[tuple[str, str]]" = None,
+         input: Optional[bytes] = None, check: bool = True,
+         timeout: int = GIT_TIMEOUT) -> subprocess.CompletedProcess:
+    cmd = ["git", *(["-C", str(repo)] if repo is not None else []), *args]
+    env = auth_env(*auth) if auth else None
+    try:
+        r = subprocess.run(cmd, input=input, capture_output=True, env=env, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise MaterializeError(f"git {' '.join(args[:2])}: {e}") from e
+    if check and r.returncode != 0:
+        raise MaterializeError(f"git {' '.join(a for a in args[:2] if '://' not in a)}: "
+                               f"{_err(r)}")
+    return r
+
+
+def _err(r: subprocess.CompletedProcess) -> str:
+    text = (r.stderr or r.stdout or b"").decode("utf-8", "replace").strip()
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return (lines[-1] if lines else str(r.returncode))[:300]
+
+
+def _out(r: subprocess.CompletedProcess) -> str:
+    return (r.stdout or b"").decode("utf-8", "replace").strip()
+
+
+def _refused(e: Exception) -> bool:
+    s = str(e)
+    return any(k in s for k in ("401", "403", "Authentication failed", "could not read Username"))
+
+
+# ── reading a commit ────────────────────────────────────────────────────────────────────
+
+def tree_root(repo: Path, commit: str) -> str:
+    """``manifest_root`` of ``commit``'s tree — what canopy-web reports as root_sha256."""
+    ls = _out(_git(repo, "ls-tree", "-r", "-z", "--full-tree", commit)).split("\0")
+    rows = []
+    for rec in ls:
+        if not rec:
+            continue
+        meta, _, path = rec.partition("\t")
+        mode, kind, sha = meta.split()
+        if kind == "blob":
+            rows.append((path, sha, mode == "100755"))
+    entries = []
+    if rows:
+        r = _git(repo, "cat-file", "--batch",
+                 input=("\n".join(sha for _, sha, _ in rows) + "\n").encode())
+        data, pos = r.stdout, 0
+        for path, _sha, executable in rows:
+            nl = data.index(b"\n", pos)
+            size = int(data[pos:nl].split()[2])
+            content = data[nl + 1:nl + 1 + size]
+            pos = nl + 1 + size + 1
+            entries.append(file_entry(path, content, executable))
+    return manifest_root(entries)
+
+
+def revision_of(repo: Path, commit: str) -> Optional[int]:
+    """N of the ``r<N>`` tag on ``commit`` (the highest, when a rollback re-tagged it)."""
+    r = _git(repo, "tag", "--points-at", commit, check=False)
+    nums = [int(t[1:]) for t in _out(r).split() if re.fullmatch(r"r\d+", t)]
+    return max(nums) if nums else None
+
+
+def _head(repo: Path) -> str:
+    r = _git(repo, "rev-parse", "--verify", "-q", "HEAD^{commit}", check=False)
+    return _out(r) if r.returncode == 0 else ""
+
+
+def _config(repo: Path, key: str) -> str:
+    r = _git(repo, "config", "--get", key, check=False)
+    return _out(r) if r.returncode == 0 else ""
+
+
+def _dirty(repo: Path) -> bool:
+    r = _git(repo, "status", "--porcelain", "--untracked-files=no", check=False)
+    return r.returncode != 0 or bool(_out(r))
+
+
+def origin_of(path: Path) -> str:
+    if not (Path(path) / ".git").exists():
+        return ""
+    return _config(Path(path), "remote.origin.url")
+
+
+def is_stored_clone(path: Path) -> bool:
+    """Whether ``path`` is a stored agent's dir: origin is a canopy git url (or the legacy
+    ``canopy://`` of the archive writer). A dir materialized from ANOTHER canopy-web (a
+    staging base) is recognised by its shape plus the ``canopy.slug`` it records."""
+    url = origin_of(path)
+    if is_canopy_git_url(url):
+        return True
+    return bool(_GIT_URL_RE.match(url)) and bool(_config(Path(path), "canopy.slug"))
+
+
+def recorded(path: Path) -> dict:
+    """What the last materialize recorded in ``path``'s git config ({} when nothing)."""
+    if not (Path(path) / ".git").exists():
+        return {}
+    rev = _config(Path(path), "canopy.revision")
+    root = _config(Path(path), "canopy.root-sha256")
+    if not (rev or root):
+        return {}
+    return {"revision": int(rev) if rev.isdigit() else None, "root_sha256": root,
+            "commit": _head(Path(path))}
+
+
+def _legacy_workspace(path: Path) -> str:
+    url = origin_of(path)
+    if url.startswith(ORIGIN_SCHEME):
+        return url[len(ORIGIN_SCHEME):].split("/", 1)[0]
+    return ""
+
+
+# ── canopy-web: where the repo is ───────────────────────────────────────────────────────
+
+def definition_info(slug: str, *, base_url: str, token: str) -> dict:
+    """``{source, git_url, repo_url, workspace, revision, root_sha256}`` from canopy-web:
+    ``/runtime`` (which a runner token reads), then the agent detail for what it lacks."""
+    info: dict = {}
+    reads = (lambda: canopy_web.call("GET", f"/api/agents/{slug}/runtime",
+                                     base_url=base_url, token=token),
+             lambda: canopy_web.call("GET", f"/api/agents/{slug}/",
+                                     base_url=base_url, token=token))
+    for read in reads:
+        try:
+            body = read() or {}
+        except Exception:  # noqa: BLE001 — a token may read one and not the other
+            continue
+        if not isinstance(body, dict):
+            continue
+        d = body.get("definition") if isinstance(body.get("definition"), dict) else {}
+        ws = body.get("workspace")
+        ws = ws.get("slug") if isinstance(ws, dict) else ws
+        for k, v in (("source", d.get("source")), ("git_url", d.get("git_url")),
+                     ("repo_url", body.get("repo_url") or d.get("repo_url")),
+                     ("workspace", ws), ("revision", d.get("revision")),
+                     ("root_sha256", d.get("root_sha256"))):
+            if v not in (None, "") and k not in info:
+                info[k] = v
+        if info.get("git_url") and info.get("source"):
+            break
+    return info
 
 
 def resolve_token(runner: bool, base_url: str) -> str:
@@ -100,209 +273,7 @@ def resolve_token(runner: bool, base_url: str) -> str:
         raise MaterializeError(f"no canopy-web token to read the definition with: {e}") from e
 
 
-def archive_path(slug: str, revision: str = "live") -> str:
-    q = urllib.parse.urlencode({"revision": str(revision or "live")})
-    return f"/api/agents/{urllib.parse.quote(slug)}/definition/archive?{q}"
-
-
-def fetch_archive(slug: str, *, revision: str = "live", base_url: str, token: str,
-                  fetch: Optional[Fetch] = None) -> Archive:
-    """Download and VERIFY one revision. Raises MaterializeError; never writes."""
-    from orchestrator.provenance import provenance_headers
-
-    headers = {**provenance_headers(), "Authorization": f"Bearer {token}",
-               "Accept": "application/gzip"}
-    url = base_url.rstrip("/") + archive_path(slug, revision)
-    try:
-        status, rh, body = (fetch or urllib_fetch)(url, headers)
-    except OSError as e:
-        raise MaterializeError(f"GET {archive_path(slug, revision)}: no answer ({e})") from e
-    if not (200 <= status < 300):
-        text = body[:300].decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
-        raise MaterializeError(f"GET {archive_path(slug, revision)} -> {status}: {text}")
-    rh = {k.lower(): v for k, v in (rh or {}).items()}
-    try:
-        number = int(str(rh.get("x-canopy-revision") or "").strip())
-    except ValueError:
-        raise MaterializeError("the archive carries no X-Canopy-Revision") from None
-    root = str(rh.get("x-canopy-root-sha256") or "").strip().lower()
-    published = str(rh.get("x-canopy-published-at") or "").strip()
-    if not root or not published:
-        raise MaterializeError("the archive lacks X-Canopy-Root-Sha256 or X-Canopy-Published-At")
-    if str(revision) not in ("", "live") and str(number) != str(revision).strip():
-        raise MaterializeError(f"asked for revision {revision}, canopy-web sent {number}")
-    files = read_tar(body)
-    got = manifest_root([file_entry(p, c, x) for p, (c, x) in files.items()])
-    if got != root:
-        raise MaterializeError(f"revision {number}'s files do not match its root: canopy-web "
-                               f"says {root[:12]}…, the archive hashes to {got[:12]}… — "
-                               "nothing was written")
-    return Archive(revision=number, root_sha256=root, published_at=published, files=files,
-                   workspace=str(rh.get("x-canopy-workspace") or "").strip())
-
-
-def read_tar(data: bytes) -> dict:
-    """{path: (bytes, executable)} from a gzip tar of regular files. Anything else — a link,
-    a device, a path that escapes, a duplicate, a bomb — is refused."""
-    try:
-        tf = tarfile.open(fileobj=io.BytesIO(data), mode="r:*")
-    except (tarfile.TarError, OSError, EOFError) as e:
-        raise MaterializeError(f"the archive is not a readable tar: {e}") from e
-    files: dict = {}
-    total = 0
-    with tf:
-        for m in tf.getmembers():
-            name = m.name[2:] if m.name.startswith("./") else m.name
-            name = name.rstrip("/") if m.isdir() else name
-            if m.isdir():
-                continue
-            if not m.isreg():
-                raise MaterializeError(f"{name}: not a regular file (links are refused)")
-            why = path_problem(name)
-            if why:
-                raise MaterializeError(f"{name!r}: {why}")
-            if name in files:
-                raise MaterializeError(f"{name}: twice in the archive")
-            total += m.size
-            if len(files) >= MAX_ARCHIVE_FILES or total > MAX_ARCHIVE_BYTES:
-                raise MaterializeError("the archive is larger than any stored agent may be")
-            fh = tf.extractfile(m)
-            content = fh.read() if fh else b""
-            files[name] = (content, bool(m.mode & 0o111))
-    return files
-
-
-# ── git ──────────────────────────────────────────────────────────────────────────────────
-
-def _git(repo: Path, *args: str, input: Optional[bytes] = None, env: Optional[dict] = None,
-         check: bool = True) -> subprocess.CompletedProcess:
-    # Config that would make the same input differ between machines is pinned off here.
-    cmd = ["git", "-C", str(repo), "-c", "core.autocrlf=false", "-c", "core.safecrlf=false",
-           "-c", "core.fileMode=true", *args]
-    r = subprocess.run(cmd, input=input, capture_output=True,
-                       env={**os.environ, **(env or {})}, timeout=120)
-    if check and r.returncode != 0:
-        err = (r.stderr or r.stdout or b"").decode("utf-8", "replace").strip()
-        raise MaterializeError(f"git {' '.join(args[:2])}: {err.splitlines()[0] if err else r.returncode}")
-    return r
-
-
-def _out(r: subprocess.CompletedProcess) -> str:
-    return (r.stdout or b"").decode("utf-8", "replace").strip()
-
-
-def git_date(published_at: str) -> str:
-    """X-Canopy-Published-At (ISO 8601, or an HTTP date) → git's ``@<unix> +0000``.
-    Whole seconds, UTC: the same header gives the same commit everywhere."""
-    s = (published_at or "").strip()
-    when: Optional[dt.datetime] = None
-    try:
-        when = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        try:
-            when = email.utils.parsedate_to_datetime(s)
-        except (TypeError, ValueError):
-            when = None
-    if when is None:
-        raise MaterializeError(f"unreadable X-Canopy-Published-At {s!r}")
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=dt.timezone.utc)
-    return f"{int(when.timestamp())} +0000"
-
-
-def commit_object(tree: str, revision: int, published_at: str) -> bytes:
-    """The commit's exact bytes: no parent, fixed identity, both dates = Published-At."""
-    when = git_date(published_at)
-    who = f"{AUTHOR} <{AUTHOR_EMAIL}> {when}"
-    return (f"tree {tree}\nauthor {who}\ncommitter {who}\n\ncanopy revision {revision}\n"
-            ).encode("utf-8")
-
-
-def write_commit(repo: Path, archive: Archive) -> str:
-    """Blobs, tree and the orphan commit into ``repo``'s object store. The working tree and
-    every ref are untouched. Returns the commit sha."""
-    index = Path(_out(_git(repo, "rev-parse", "--absolute-git-dir"))) / "canopy-materialize.index"
-    try:
-        index.unlink()
-    except FileNotFoundError:
-        pass
-    lines = []
-    for path in sorted(archive.files):
-        content, executable = archive.files[path]
-        blob = _out(_git(repo, "hash-object", "-w", "--no-filters", "--stdin", input=content))
-        lines.append(f"{'100755' if executable else '100644'} {blob}\t{path}\n")
-    env = {"GIT_INDEX_FILE": str(index)}
-    try:
-        _git(repo, "update-index", "--add", "--index-info",
-             input="".join(lines).encode("utf-8"), env=env)
-        tree = _out(_git(repo, "write-tree", env=env)) if lines else _empty_tree(repo)
-    finally:
-        try:
-            index.unlink()
-        except FileNotFoundError:
-            pass
-    body = commit_object(tree, archive.revision, archive.published_at)
-    return _out(_git(repo, "hash-object", "-t", "commit", "-w", "--stdin", input=body))
-
-
-def _empty_tree(repo: Path) -> str:
-    return _out(_git(repo, "hash-object", "-t", "tree", "-w", "--stdin", input=b""))
-
-
-def _head(repo: Path) -> str:
-    r = _git(repo, "rev-parse", "--verify", "-q", "HEAD^{commit}", check=False)
-    return _out(r) if r.returncode == 0 else ""
-
-
-def _config(repo: Path, key: str) -> str:
-    r = _git(repo, "config", "--get", key, check=False)
-    return _out(r) if r.returncode == 0 else ""
-
-
-def _dirty(repo: Path) -> bool:
-    r = _git(repo, "status", "--porcelain", "--untracked-files=no", check=False)
-    return r.returncode != 0 or bool(_out(r))
-
-
-def origin_url(workspace: str, slug: str) -> str:
-    return f"{ORIGIN_SCHEME}{workspace or 'unknown'}/{slug}"
-
-
-def is_stored_clone(path: Path) -> bool:
-    """Whether ``path`` is a materialized stored agent (origin ``canopy://…``)."""
-    if not (Path(path) / ".git").exists():
-        return False
-    return _config(Path(path), "remote.origin.url").startswith(ORIGIN_SCHEME)
-
-
-def recorded(path: Path) -> dict:
-    """What the last materialize recorded in ``path``'s git config ({} when nothing)."""
-    if not (Path(path) / ".git").exists():
-        return {}
-    rev = _config(Path(path), "canopy.revision")
-    return {"revision": int(rev) if rev.isdigit() else None,
-            "root_sha256": _config(Path(path), "canopy.root-sha256"),
-            "commit": _head(Path(path))} if rev or _config(Path(path), "canopy.root-sha256") else {}
-
-
-def _init(repo: Path) -> None:
-    repo.mkdir(parents=True, exist_ok=True)
-    if not (repo / ".git").exists():
-        subprocess.run(["git", "-c", "init.defaultObjectFormat=sha1", "init", "-q", str(repo)],
-                       capture_output=True, check=True, timeout=60)
-
-
-def _point(repo: Path, commit: str, url: str) -> None:
-    """The refs and remote that make `commit` look like a clone of origin/main."""
-    _git(repo, "update-ref", "refs/remotes/origin/main", commit)
-    _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-    if _git(repo, "remote", "get-url", "origin", check=False).returncode == 0:
-        _git(repo, "remote", "set-url", "origin", url)
-    else:
-        _git(repo, "remote", "add", "origin", url)
-    _git(repo, "config", "branch.main.remote", "origin")
-    _git(repo, "config", "branch.main.merge", "refs/heads/main")
-
+# ── writing the dest ────────────────────────────────────────────────────────────────────
 
 class _DestLock:
     """One materialize per dest at a time (a runner's claim and the session-start updater can
@@ -328,32 +299,64 @@ class _DestLock:
         return False
 
 
-def write_revision(dest: Path, archive: Archive, *, slug: str, workspace: str) -> "tuple[str, bool]":
-    """(commit, changed). Stage objects and refs first, swap the working tree last."""
+def _set_origin(repo: Path, url: str) -> None:
+    if _git(repo, "remote", "get-url", "origin", check=False).returncode == 0:
+        _git(repo, "remote", "set-url", "origin", url)
+    else:
+        _git(repo, "remote", "add", "origin", url)
+    _git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+    _git(repo, "config", "branch.main.remote", "origin")
+    _git(repo, "config", "branch.main.merge", "refs/heads/main")
+
+
+def fetch(repo: Path, url: str, token: str) -> None:
+    """``main`` and the ``r<N>`` tags from the canopy repo, as ``token``."""
+    _git(repo, "fetch", "--quiet", "--prune", "--tags", "origin",
+         "+refs/heads/main:refs/remotes/origin/main", auth=(url, token))
+    _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+
+def checkout(dest: Path, *, slug: str, git_url: str, token: str,
+             revision: str = "live") -> dict:
+    """Bring ``dest`` to ``revision`` from ``git_url``. Returns the JSON line's dict."""
     dest = Path(dest).expanduser()
     with _DestLock(dest):
-        return _write_revision(dest, archive, slug=slug, workspace=workspace)
+        return _checkout(dest, slug=slug, git_url=git_url, token=token, revision=revision)
 
 
-def _write_revision(dest: Path, archive: Archive, *, slug: str, workspace: str) -> "tuple[str, bool]":
+def _checkout(dest: Path, *, slug: str, git_url: str, token: str, revision: str) -> dict:
     fresh = not dest.exists() or (dest.is_dir() and not any(dest.iterdir()))
     work = dest
     if fresh:
         dest.parent.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix=f".{dest.name}.materialize-", dir=str(dest.parent)))
     try:
-        _init(work)
-        commit = write_commit(work, archive)
-        changed = fresh or _head(work) != commit or _dirty(work)
-        _point(work, commit, origin_url(workspace, slug))
+        if not (work / ".git").exists():
+            _git(None, "init", "-q", str(work))
+        _set_origin(work, git_url)
+        fetch(work, git_url, token)
+        rev = str(revision or "live").strip()
+        ref = "refs/remotes/origin/main" if rev == "live" else f"refs/tags/r{rev}"
+        r = _git(work, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", check=False)
+        target = _out(r)
+        if r.returncode != 0 or not target:
+            raise MaterializeError(f"{slug} has no {'live' if rev == 'live' else 'published'} "
+                                   f"revision {'' if rev == 'live' else rev}".rstrip())
+        changed = fresh or _head(work) != target or _dirty(work)
         if changed:
             # The swap: HEAD onto main, index and tracked files to the commit. Untracked and
             # ignored files are not git's to touch and stay.
             _git(work, "symbolic-ref", "HEAD", "refs/heads/main")
-            _git(work, "reset", "-q", "--hard", commit)
-        for key, value in (("canopy.slug", slug), ("canopy.revision", str(archive.revision)),
-                           ("canopy.root-sha256", archive.root_sha256)):
-            _git(work, "config", key, value)
+            _git(work, "reset", "-q", "--hard", target)
+        number = revision_of(work, target)
+        root = tree_root(work, target)
+        for key, value in (("canopy.slug", slug),
+                           ("canopy.revision", "" if number is None else str(number)),
+                           ("canopy.root-sha256", root)):
+            if value:
+                _git(work, "config", key, value)
+            else:
+                _git(work, "config", "--unset-all", key, check=False)
         if fresh:
             if dest.exists():
                 dest.rmdir()
@@ -362,76 +365,74 @@ def _write_revision(dest: Path, archive: Archive, *, slug: str, workspace: str) 
         if fresh and work != dest:
             shutil.rmtree(work, ignore_errors=True)
         raise
-    return commit, changed
+    return {"slug": slug, "revision": number, "root_sha256": root, "commit": target,
+            "changed": changed}
+
+
+def repoint_to_repo(dest: Path, repo_url: str) -> None:
+    """An EXPORTED agent's dir: origin becomes its repo (``https://github.com/o/n.git``) and
+    the canopy markers go. The caller's ordinary repo path (fetch, reset/pull) takes over —
+    the export carried main's whole history, so the local HEAD is an ancestor."""
+    url = repo_url.strip().rstrip("/")
+    if not url.endswith(".git"):
+        url += ".git"
+    dest = Path(dest)
+    _git(dest, "remote", "set-url", "origin", url)
+    _git(dest, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+    for key in ("canopy.slug", "canopy.revision", "canopy.root-sha256"):
+        _git(dest, "config", "--unset-all", key, check=False)
 
 
 # ── the command ─────────────────────────────────────────────────────────────────────────
 
-def _workspace_of(slug: str, *, base_url: str, token: str) -> str:
-    try:
-        agent = canopy_web.call("GET", f"/api/agents/{slug}/", base_url=base_url, token=token) or {}
-    except Exception:  # noqa: BLE001 — the url is a label; never a reason to fail
-        return ""
-    ws = agent.get("workspace")
-    return str((ws.get("slug") if isinstance(ws, dict) else ws) or "")
-
-
-def live_root(slug: str, *, base_url: str, token: str) -> dict:
-    """``GET /definition``'s live block ({} when it cannot be read — a runner token may not)."""
-    try:
-        body = canopy_web.call("GET", f"/api/agents/{slug}/definition",
-                               base_url=base_url, token=token) or {}
-    except Exception:  # noqa: BLE001
-        return {}
-    live = body.get("live") if isinstance(body, dict) else None
-    return live if isinstance(live, dict) else {}
-
-
 def materialize(slug: str, dest: Path, *, revision: str = "live", runner: bool = False,
                 base_url: Optional[str] = None, token: Optional[str] = None,
-                fetch: Optional[Fetch] = None, workspace: str = "",
-                precheck: bool = True) -> dict:
+                git_url: str = "", workspace: str = "",
+                info: Optional[dict] = None) -> dict:
     """Bring ``dest`` to ``revision`` of ``slug``'s definition. Returns the JSON line's dict
-    ``{slug, revision, root_sha256, commit, changed}``. Raises MaterializeError."""
+    ``{slug, revision, root_sha256, commit, changed}``. Raises MaterializeError.
+
+    ``git_url`` (the resolve payload's ``definition.git_url``) saves a canopy-web read.
+    An exported agent (``source: repo``): a stored dir at ``dest`` is repointed at its repo
+    and the dict says ``source: "repo"``, ``repo_url``; with no dir, ExportedAgent."""
     base = canopy_web.resolve_base_url(base_url)
     tok = token or resolve_token(runner, base)
     dest = Path(dest).expanduser()
-    if precheck and str(revision or "live") == "live" and (dest / ".git").exists():
-        # The cheap no-op: canopy-web's live root is what this dir records, HEAD is on it and
-        # nothing tracked was touched — no download. (A runner token may not read
-        # /definition; then the archive is fetched and the commit compared.)
-        live, rec = live_root(slug, base_url=base, token=tok), recorded(dest)
-        if (live.get("root_sha256") and rec.get("commit")
-                and str(live.get("root_sha256")).lower() == rec.get("root_sha256")
-                and str(live.get("number")) == str(rec.get("revision"))
-                and _out(_git(dest, "rev-parse", "-q", "--verify", "refs/remotes/origin/main",
-                              check=False)) == rec["commit"]
-                and not _dirty(dest)):
-            return {"slug": slug, "revision": rec["revision"], "root_sha256": rec["root_sha256"],
-                    "commit": rec["commit"], "changed": False}
+    if not git_url:
+        info = info if info is not None else definition_info(slug, base_url=base, token=tok)
+        if str(info.get("source") or "") == "repo":
+            repo_url = str(info.get("repo_url") or "")
+            if repo_url and is_stored_clone(dest):
+                repoint_to_repo(dest, repo_url)
+                return {"slug": slug, "revision": None, "root_sha256": None,
+                        "commit": _head(dest), "changed": False, "source": "repo",
+                        "repo_url": repo_url}
+            raise ExportedAgent(slug, repo_url)
+        git_url = str(info.get("git_url") or "")
+        if not git_url:
+            ws = workspace or str(info.get("workspace") or "") or _legacy_workspace(dest)
+            if not ws:
+                raise MaterializeError(f"canopy-web gave no git url for {slug} (is it a stored "
+                                       "agent, and may this token read it?)")
+            git_url = git_url_for(base, ws, slug)
     try:
-        archive = fetch_archive(slug, revision=revision, base_url=base, token=tok, fetch=fetch)
+        return checkout(dest, slug=slug, git_url=git_url, token=tok, revision=revision)
     except MaterializeError as e:
         # Refused as whoever the token is (a person's PAT on a runner box, a revoked one):
         # read again as THIS box's runner, which canopy-web lets read the agents it serves.
-        if not any(f"-> {c}:" in str(e) for c in (401, 403)) or token:
+        if not _refused(e) or token:
             raise
         from orchestrator import runner_session
 
         rtok = runner_session.token(base)
         if not rtok or rtok == tok:
             raise
-        tok = rtok
-        archive = fetch_archive(slug, revision=revision, base_url=base, token=tok, fetch=fetch)
-    ws = workspace or archive.workspace or _workspace_of(slug, base_url=base, token=tok)
-    commit, changed = write_revision(dest, archive, slug=slug, workspace=ws)
-    return {"slug": slug, "revision": archive.revision, "root_sha256": archive.root_sha256,
-            "commit": commit, "changed": changed}
+        return checkout(dest, slug=slug, git_url=git_url, token=rtok, revision=revision)
 
 
 def default_dest(slug: str, *, runner: bool, agent_root: Optional[str] = None) -> Path:
-    """Where an agent's materialized dir lives: ``$AGENT_ROOT/<slug>`` on a runner (the
-    clone `agent prepare --runner` makes), ``~/.canopy/agents/<slug>`` on a person's laptop."""
+    """Where an agent's dir lives: ``$AGENT_ROOT/<slug>`` on a runner (the clone
+    `agent prepare --runner` makes), ``~/.canopy/agents/<slug>`` on a person's laptop."""
     if runner or agent_root:
         root = agent_root or os.environ.get("AGENT_ROOT", "/opt/agents")
         return Path(root).expanduser() / slug

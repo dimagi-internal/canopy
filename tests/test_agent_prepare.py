@@ -709,6 +709,48 @@ def test_a_stored_agent_with_no_dir_and_no_archive_fails(tmp_path):
                               for n in rep.notes)
 
 
+def test_a_stored_agent_is_fetched_from_the_resolve_payloads_git_url(tmp_path, monkeypatch):
+    from orchestrator import agent_materialize as am
+    seen = {}
+
+    def materialize(slug, dest, **kw):
+        seen.update(kw, slug=slug)
+        _repo(tmp_path / "agents")
+        return {"slug": slug, "revision": 3, "root_sha256": "ab" * 32, "commit": "c0ffee12" * 5,
+                "changed": False}
+
+    monkeypatch.setattr(am, "materialize", materialize)
+    url = "https://canopy.test/git/connect/ace.git"
+    p = _prep(tmp_path, Box(tmp_path), creds=_creds(
+        repo_url="", definition={"source": "stored", "revision": 3, "git_url": url}))
+    p.prepare("ace")
+    assert seen["git_url"] == url and seen["runner"] is True and seen["token"] == "runner-pat"
+
+
+def test_an_exported_agents_stored_dir_is_repointed_at_github_then_pulled(tmp_path):
+    """Stored → exported (source=repo, repo_url=GitHub): the dir's canopy origin moves to the
+    GitHub repo and the ordinary pull runs; nothing is re-cloned, .env stays."""
+    import subprocess as sp
+    dest = tmp_path / "agents" / "ace"
+    sp.run(["git", "init", "-q", str(dest)], check=True)
+    sp.run(["git", "-C", str(dest), "remote", "add", "origin",
+            "https://canopy.test/git/connect/ace.git"], check=True)
+    sp.run(["git", "-C", str(dest), "config", "canopy.slug", "ace"], check=True)
+    (dest / ".env").write_text("KEEP=1")
+    _repo(tmp_path / "agents")
+    box = Box(tmp_path)
+    rep = _prep(tmp_path, box, creds=_creds(
+        repo_url="https://github.com/dimagi-internal/ace",
+        definition={"source": "repo"})).prepare("ace")
+    origin = sp.run(["git", "-C", str(dest), "remote", "get-url", "origin"], capture_output=True,
+                    text=True).stdout.strip()
+    assert origin == "https://github.com/dimagi-internal/ace.git"
+    assert any("moved from canopy-web" in n for n in rep.notes)
+    assert [c for c in box.ran(["git"]) if "pull" in c[0]]
+    assert not [c for c in box.ran(["git"]) if "clone" in c[0]]
+    assert (dest / ".env").read_text() == "KEEP=1"
+
+
 def test_runner_credentials_carry_the_definition_block():
     def transport(method, url, headers, data):
         if url.endswith("/runtime"):

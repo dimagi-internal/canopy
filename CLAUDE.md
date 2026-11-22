@@ -92,7 +92,7 @@ You're usually in a worktree (`git rev-parse --git-dir` contains `/worktrees/`),
 | Email, Docs, gog | `docs/architecture/shared-gog-gdrive.md` |
 | `/api/agents` client, provenance headers | `docs/architecture/agent-client-rest-contract.md` |
 | Agent setup stages | `docs/architecture/agent-setup-lifecycle.md` |
-| Stored agents (no repo), materialize | `docs/architecture/stored-agents.md` |
+| Stored agents (git repo hosted by canopy-web), materialize, clone, export | `docs/architecture/stored-agents.md` |
 | Agent threads | `docs/architecture/agent-threads.md` |
 | The agent model and factory | `docs/agent-operating-model.md` |
 | Knowledge bases | `docs/knowledge-bases.md` |

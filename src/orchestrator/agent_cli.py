@@ -147,10 +147,13 @@ def agent_sync(slug, runner_mode, dest, agent_root, doc_url, title, summary, gra
 
     \b
     MANAGER SYNC (--doc-url --title --period-start --period-end): post a manager sync.
-    DEFINITION SYNC (none of those): a STORED agent's `git pull --ff-only` — materialize
-      its live revision into its dir when it changed (docs/architecture/stored-agents.md),
-      then print ONE JSON line {slug, revision, root_sha256, commit, changed}. A dir that
-      does not exist yet is created; one that is a GitHub clone is refused.
+    DEFINITION SYNC (none of those): a STORED agent's `git pull` — fetch its canopy-web
+      git repo (the token passed for that command only) and `reset --hard origin/main`
+      (docs/architecture/stored-agents.md), then print ONE JSON line {slug, revision,
+      root_sha256, commit, changed}. A dir that does not exist yet is cloned; one that is a
+      GitHub clone is refused; one from before canopy hosted git (origin canopy://) is
+      converted in place. An agent exported to GitHub gets its dir's origin pointed there
+      and the line says "source": "repo".
     """
     manager = [doc_url, title, period_start, period_end]
     if any(v is not None for v in manager):
@@ -171,7 +174,7 @@ def agent_sync(slug, runner_mode, dest, agent_root, doc_url, title, summary, gra
         slug, runner=runner_mode, agent_root=agent_root)
     if (target / ".git").exists() and not am.is_stored_clone(target):
         raise click.ClickException(f"{target} is a git clone of a repository, not a stored "
-                                   f"agent's materialized dir — `git pull` it instead")
+                                   f"agent's dir — `git pull` it instead")
     try:
         _emit(am.materialize(slug, target, runner=runner_mode))
     except am.MaterializeError as e:
@@ -187,13 +190,15 @@ def agent_sync(slug, runner_mode, dest, agent_root, doc_url, title, summary, gra
               help="Read with the runner's credentials (CANOPY_TOKEN), as `agent prepare "
                    "--runner` does; otherwise your canopy-web login.")
 def agent_materialize(slug, dest, revision, runner_mode):
-    """Write a STORED agent's revision into DEST as a git repo with ONE deterministic commit.
+    """Bring DEST to a STORED agent's revision: a clone of its canopy-web git repo.
 
-    Verifies the archive's root before writing anything; tracked files are replaced exactly
-    and ones absent from the revision deleted; untracked and ignored files (.env,
-    node_modules) stay. HEAD, main and origin/main all point at the commit; origin's url is
-    canopy://<workspace>/<slug>. Prints ONE JSON line {slug, revision, root_sha256, commit,
-    changed}; does nothing when DEST is already at that revision."""
+    Origin is the canopy git url (<canopy>/git/<workspace>/<slug>.git); the token rides
+    each git command's environment, never .git/config or the url. `reset --hard` to
+    origin/main (or the r<N> tag): tracked files are replaced exactly and ones absent from
+    the revision deleted; untracked and ignored files (.env, node_modules) stay. A dir from
+    before canopy hosted git (origin canopy://) is converted in place. Prints ONE JSON line
+    {slug, revision, root_sha256, commit, changed}; changes nothing when DEST is already
+    there."""
     from orchestrator import agent_materialize as am
 
     try:

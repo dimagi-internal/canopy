@@ -144,3 +144,156 @@ def test_create_agent_stored_posts_and_writes_nothing(web, tmp_path, monkeypatch
         "name": "Connect Helper", "slug": "connect-helper", "mandate": "Help workers",
         "workspace": "connect"})]
     assert list(tmp_path.iterdir()) == []
+
+
+# ── git: convert --with-history, clone, credential, export ──────────────────────────────
+
+def _commit(repo, msg="c"):
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=x", "-c", "user.email=x@x",
+                    "-c", "commit.gpgsign=false", "commit", "-qm", msg], check=True)
+
+
+def test_convert_with_history_sends_a_bundle_of_main(web, tmp_path):
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "main"], check=True)
+    _commit(repo, "first")
+    res = cli("agent", "definition", "convert", "--from", str(repo), "--drop-refused",
+              "--with-history")
+    assert res.exit_code == 0, res.output
+    (_, _, body), = [c for c in web.calls if c[0] == "POST"]
+    bundle = tmp_path / "b.bundle"
+    bundle.write_bytes(base64.b64decode(body["bundle_b64"]))
+    heads = subprocess.run(["git", "bundle", "list-heads", str(bundle)], capture_output=True,
+                           text=True, check=True).stdout
+    assert heads.strip().endswith("refs/heads/main")
+    assert json.loads(res.output)["history_bundle_bytes"] == bundle.stat().st_size
+
+
+def test_convert_with_history_refuses_above_the_cap_with_the_files_only_hint(web, tmp_path,
+                                                                             monkeypatch):
+    from orchestrator import agent_definition_cli as dc
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "main"], check=True)
+    _commit(repo)
+    monkeypatch.setattr(dc, "MAX_CONVERT_BODY", 100)
+    res = CliRunner().invoke(main, ["agent", "definition", "convert", "--from", str(repo),
+                                    "--drop-refused", "--with-history"])
+    assert res.exit_code != 0 and "drop --with-history" in res.output
+    assert not [c for c in web.calls if c[0] == "POST"]
+
+
+def test_convert_with_history_needs_main(web, tmp_path):
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "trunk"], check=True)
+    _commit(repo)
+    res = CliRunner().invoke(main, ["agent", "definition", "convert", "--from", str(repo),
+                                    "--drop-refused", "--with-history"])
+    assert res.exit_code != 0 and "no `main` branch" in res.output
+
+
+@pytest.fixture
+def gitsrv(tmp_path, monkeypatch):
+    from tests.git_http_fake import GitHttpFake, http_backend
+    if not http_backend():
+        pytest.skip("needs git http-backend")
+    srv = GitHttpFake(tmp_path / "srv", token="PERSON-TOKEN-1").start()
+    srv.publish("connect", "helper", {"CLAUDE.md": (b"# helper\n", False)}, 1)
+    monkeypatch.setenv("CANOPY_WEB_API_URL", srv.base)
+    monkeypatch.setattr(canopy_web, "resolve_token", lambda t=None, **kw: "PERSON-TOKEN-1")
+
+    def call(method, path, body=None, **kw):
+        if path == "/api/agents/helper/runtime":
+            return {"definition": {"source": "stored", "git_url": srv.url("connect", "helper")}}
+        srv.api.append((method, path, body))
+        return {"ok": True}
+    srv.api = []
+    monkeypatch.setattr(canopy_web, "call", call)
+    yield srv
+    srv.stop()
+
+
+def test_clone_makes_a_working_copy_and_stores_no_token(gitsrv, tmp_path, monkeypatch):
+    from orchestrator import agent_definition_cli as dc
+    monkeypatch.setattr(dc, "_helper_command", lambda: "!canopy-test-helper")
+    dest = tmp_path / "wc"
+    res = cli("agent", "definition", "clone", "--slug", "helper", str(dest))
+    assert res.exit_code == 0, res.output
+    assert (dest / "CLAUDE.md").read_text() == "# helper\n"
+    assert "git -C" in res.output and "pull" in res.output and "nothing is stored" in res.output
+    cfg = (dest / ".git" / "config").read_text()
+    assert "PERSON-TOKEN-1" not in cfg and "Bearer" not in cfg
+    assert f'[credential "{gitsrv.base}"]' in cfg and "canopy-test-helper" in cfg
+    assert "r1" in subprocess.run(["git", "-C", str(dest), "tag"], capture_output=True,
+                                  text=True).stdout
+
+
+def test_credential_helper_answers_only_for_canopy(gitsrv):
+    host = gitsrv.base.split("://", 1)[1]
+    res = CliRunner().invoke(main, ["agent", "definition", "credential", "get"],
+                             input=f"protocol=http\nhost={host}\n")
+    assert res.output == "username=canopy\npassword=PERSON-TOKEN-1\n"
+    other = CliRunner().invoke(main, ["agent", "definition", "credential", "get"],
+                               input="protocol=https\nhost=github.com\n")
+    assert other.output == ""
+    assert CliRunner().invoke(main, ["agent", "definition", "credential", "store"],
+                              input=f"protocol=http\nhost={host}\npassword=x\n").output == ""
+
+
+def test_a_helper_clone_pulls_with_plain_git(gitsrv, tmp_path, monkeypatch):
+    """The installed helper is what a later `git pull` uses: 401 → helper → Basic(token)."""
+    import os
+    from orchestrator import agent_definition_cli as dc
+    helper = tmp_path / "helper.sh"
+    helper.write_text('#!/bin/sh\ntest "$1" = get || exit 0\ncat >/dev/null\n'
+                      'echo username=canopy\necho password=PERSON-TOKEN-1\n')
+    helper.chmod(0o755)
+    monkeypatch.setattr(dc, "_helper_command", lambda: str(helper))
+    dest = tmp_path / "wc"
+    assert cli("agent", "definition", "clone", "--slug", "helper", str(dest)).exit_code == 0
+    gitsrv.publish("connect", "helper", {"CLAUDE.md": (b"# v2\n", False)}, 2)
+    r = subprocess.run(["git", "-C", str(dest), "pull", "-q", "--ff-only"], capture_output=True,
+                       text=True, env={"PATH": os.environ["PATH"],
+                                       "HOME": str(tmp_path), "GIT_TERMINAL_PROMPT": "0"})
+    assert r.returncode == 0, r.stderr
+    assert (dest / "CLAUDE.md").read_text() == "# v2\n"
+    assert any(s["auth"].startswith("Basic ") for s in gitsrv.seen)
+
+
+def test_export_calls_the_route(web):
+    res = cli("agent", "definition", "export", "--slug", "helper", "--to-github",
+              "https://github.com/dimagi-internal/helper.git")
+    assert res.exit_code == 0, res.output
+    assert ("POST", "/api/agents/helper/definition/export",
+            {"repo": "dimagi-internal/helper", "ref": "main"}) in web.calls
+
+
+def test_export_refuses_a_bad_repo_name(web):
+    res = CliRunner().invoke(main, ["agent", "definition", "export", "--slug", "helper",
+                                    "--to-github", "not a repo"])
+    assert res.exit_code != 0 and "OWNER/NAME" in res.output
+
+
+def test_export_push_myself_pushes_history_then_detaches(gitsrv, tmp_path, monkeypatch):
+    """The person's own git pushes canopy's main + tags to the (empty) GitHub repo — here a
+    local bare repo standing in for github.com — with no canopy header; then detach."""
+    gitsrv.publish("connect", "helper", {"CLAUDE.md": (b"# v2\n", False)}, 2)
+    gh = tmp_path / "gh" / "o" / "helper.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(gh)], check=True)
+    # Route https://github.com/ to the local dir for this test's git commands only.
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{tmp_path / 'gh'}/.insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "https://github.com/")
+    res = cli("agent", "definition", "export", "--slug", "helper", "--to-github", "o/helper",
+              "--push-myself")
+    assert res.exit_code == 0, res.output
+    log = subprocess.run(["git", "-C", str(gh), "log", "--format=%s", "main"],
+                         capture_output=True, text=True).stdout.split("\n")
+    assert log[:2] == ["revision 2", "revision 1"]
+    tags = subprocess.run(["git", "-C", str(gh), "tag"], capture_output=True, text=True).stdout
+    assert tags.split() == ["r1", "r2"]
+    assert gitsrv.api == [("POST", "/api/agents/helper/definition/detach",
+                           {"repo_url": "https://github.com/o/helper"})]
+    # The repo now holds main: a second export is refused before anything is pushed.
+    again = CliRunner().invoke(main, ["agent", "definition", "export", "--slug", "helper",
+                                      "--to-github", "o/helper", "--push-myself"])
+    assert again.exit_code != 0 and "not empty" in again.output

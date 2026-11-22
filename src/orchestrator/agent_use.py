@@ -22,8 +22,8 @@ can fix it, and otherwise reported as NEEDS YOU with the exact URL, command or p
                    only the machines that run it get it, so here you use your own account —
                    for GitHub, checked with `gh auth status`
   plugin           the agent's plugin is installed (`<plugin>@canopy-agents`); a STORED
-                   agent (no repo) is first materialized into ~/.canopy/agents/<slug> and
-                   installed from that dir (`definition` step; docs/architecture/stored-agents.md)
+                   agent (repo hosted by canopy-web) is first cloned into
+                   ~/.canopy/agents/<slug> and installed from that dir (`definition` step; docs/architecture/stored-agents.md)
   this project     sessions in --dir use the agent (`$CANOPY_AGENT`)
   env              the agent's env synced from its vault (`canopy cred sync`'s path)
   google login     the agent's Google login in gog — OAuth client file, token, account
@@ -473,9 +473,10 @@ def _plugin_step(rep: UseReport, plugin: str, deps: Deps) -> None:
 
 
 def _stored_plugin_step(rep: UseReport, slug: str, plugin: str, deps: Deps, *, ask: str) -> None:
-    """A STORED agent has no repo and is not in the canopy-agents catalog: materialize its
-    live revision into ~/.canopy/agents/<slug> and install that dir as a directory
-    marketplace. The fleet updater then keeps it current (`canopy agent sync`)."""
+    """A STORED agent's repo is hosted by canopy-web and it is not in the canopy-agents
+    catalog: clone its live revision into ~/.canopy/agents/<slug> (`materialize`, with your
+    token on each git command only) and install that dir as a directory marketplace. The
+    fleet updater then keeps it current (`canopy agent sync`)."""
     dest = Path(deps.stored_dir(slug))
     try:
         out = deps.materialize(slug, dest) or {}
