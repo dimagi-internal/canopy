@@ -34,10 +34,10 @@ repos:
         name: Regenerate narrative JSON schemas from models.py
         entry: python scripts/ddd/regen_json_schemas.py
         language: python
-        # Match pyproject.toml's `requires-python = ">=3.11"`. The DDD models
-        # use 3.10+ union syntax (`str | None`); the hook fails on the
-        # default 3.9 pre-commit uses on macOS.
-        language_version: python3.11
+        # The dev Python (.python-version). The DDD models use 3.10+ union
+        # syntax (`str | None`); the hook fails on the default 3.9 pre-commit
+        # uses on macOS.
+        language_version: python3.13
         # additional_dependencies match the constraints in pyproject.toml so
         # the hook venv mirrors the project runtime. pyyaml is imported at
         # module load of scripts/ddd/validate.py (for validate(), not for

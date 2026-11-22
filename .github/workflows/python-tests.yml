@@ -19,6 +19,11 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # The suite runs on 3.13 (the fleet's Python). The root .python-version covers `uv sync` at
+    # the repo root, but packages/canopy_agent_factory is its own uv project and would fall back
+    # to the runner's default python, so pin it for every step here.
+    env:
+      UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
