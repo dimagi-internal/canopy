@@ -1,7 +1,7 @@
 """The vendored stored-agent helpers (orchestrator/agent_definition.py).
 
 `manifest_root` must equal canopy-web's `canopy_sdk.agent_definition.manifest_root` byte for
-byte: a materialized revision is refused when its root does not match the header canopy-web
+byte: canopy recomputes a revision's root from its commit's tree and must agree with the root canopy-web
 sends. The canonical form is pinned here as a literal, not re-derived.
 """
 from __future__ import annotations

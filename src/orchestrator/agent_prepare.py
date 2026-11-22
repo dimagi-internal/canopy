@@ -24,9 +24,11 @@ TWO CREDENTIAL MODES, one set of steps:
 RUNNER STEPS, in order (each says what it did; one failing never stops the rest):
   1. repo — clone, or `git pull --ff-only`, with the owner's GitHub token on that one git
      command only. A pull that fails on an existing clone provisions the clone as it is.
-     A STORED agent (the resolve payload's `definition.source == "stored"`) has no repo:
-     its live revision is materialized into the same dest instead (agent_materialize.py,
-     docs/architecture/stored-agents.md); every later step is unchanged.
+     A STORED agent (the resolve payload's `definition.source == "stored"`) has no GitHub
+     repo: the same dest is a clone of its canopy-web git repo (`definition.git_url`,
+     fetched with the runner's token on that command only; agent_materialize.py,
+     docs/architecture/stored-agents.md); every later step is unchanged. A stored dir whose
+     agent was exported to GitHub is repointed at that repo and pulled.
   2. env — ~/.<slug>/.env written from the agent's Canopy vault values.
   3. plugins — its own plugin from the clone (a directory marketplace: the pull is the
      update); each required plugin cloned beside the CLI's marketplaces, pulled every pass,
@@ -358,8 +360,9 @@ class RunnerPreparer(Bootstrapper):
 
     def _materialize_live(self, slug: str, dest: Path) -> dict:
         from orchestrator.agent_materialize import materialize
+        git_url = str((self.creds(slug).definition or {}).get("git_url") or "")
         return materialize(slug, dest, runner=True, base_url=self.base_url,
-                           token=self.token or None)
+                           token=self.token or None, git_url=git_url)
 
     def is_stored(self, slug: str, dest: Path, repo_url: str = "") -> bool:
         """A STORED agent: canopy-web says so, or (no repo recorded) its dir is one already."""
@@ -416,6 +419,18 @@ class RunnerPreparer(Bootstrapper):
             rep.fail(f"repo: canopy-web's repository for {slug} is not a GitHub repo "
                      f"({url[:120]!r}) — set it on the agent's settings")
             return None
+        if (dest / ".git").is_dir():
+            from orchestrator.agent_materialize import is_stored_clone, repoint_to_repo
+            if is_stored_clone(dest):
+                # Was stored, now a repo agent (exported to GitHub): the dir's origin moves
+                # to the repo, whose main carries the same history, so the pull is a
+                # fast-forward. Untracked files (.env, node_modules) stay.
+                try:
+                    repoint_to_repo(dest, safe)
+                    rep.notes.append(f"repo: {slug} moved from canopy-web to {safe}")
+                except Exception as e:  # noqa: BLE001
+                    rep.notes.append(f"repo: could not repoint {dest} at {safe}: "
+                                     f"{_first_line(str(e), 200)}")
         err = self.clone_or_pull(safe + ".git", dest, self.creds(slug).github_token)
         if err and (dest / ".git").is_dir():
             # A clone that could not be UPDATED is still a clone — provision it as it is,

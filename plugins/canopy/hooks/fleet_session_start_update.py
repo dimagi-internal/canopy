@@ -510,7 +510,9 @@ def update_one(target: dict) -> dict:
         return result
 
     if is_stored_clone(clone):
-        return _update_stored(target, result, clone)
+        stored = _update_stored(target, result, clone)
+        if stored is not None:
+            return stored
 
     branch = _default_branch(clone)
     rc, _, err = run(["git", "fetch", "--quiet", "origin", branch], FETCH_TIMEOUT, cwd=clone)
@@ -557,21 +559,44 @@ def update_one(target: dict) -> dict:
         return _update_behind(target, result, clone, branch, remote_sha)
 
 
-# ── stored agents: canopy-web, not git, is the remote ───────────────────────────────────────
+# ── stored agents: canopy-web hosts the repo ───────────────────────────────────────────────
 #
-# A stored agent's definition lives in canopy-web (docs/architecture/stored-agents.md); its
-# marketplace dir is a MATERIALIZED repo whose origin is `canopy://<workspace>/<slug>`, which
-# git cannot fetch. `canopy agent sync` is its `git fetch` + fast-forward: it materializes the
-# live revision (one deterministic orphan commit; HEAD == origin/main). Then the install is
-# the same build_and_swap + patch_registry as any other plugin.
+# A stored agent's definition is a git repo hosted by canopy-web
+# (docs/architecture/stored-agents.md); its marketplace dir is a clone whose origin is
+# `<canopy base>/git/<workspace>/<slug>.git` (or, written before canopy hosted git,
+# `canopy://<workspace>/<slug>`). A plain `git fetch` would carry no canopy token, so it is
+# never run on such a dir: `canopy agent sync` fetches it with the token on that command
+# only and resets to origin/main (converting a `canopy://` dir in place). Then the install
+# is the same build_and_swap + patch_registry as any other plugin. An agent exported to
+# GitHub comes back from the sync with its origin on GitHub, and takes the ordinary path.
 
 STORED_ORIGIN = "canopy://"
-SYNC_TIMEOUT = 120
+CANOPY_BASE_DEFAULT = "https://canopy.dimagi.com"
+SYNC_TIMEOUT = 300
+_CANOPY_GIT_RE = re.compile(r"^https?://[^/]+(/[^?#]*)?/git/[^/]+/[^/]+\.git/?$")
+
+
+def _canopy_base() -> str:
+    return (os.environ.get("CANOPY_WEB_API_URL") or CANOPY_BASE_DEFAULT).strip().rstrip("/")
+
+
+def is_canopy_origin(url: str) -> bool:
+    url = (url or "").strip()
+    return url.startswith(STORED_ORIGIN) or url.startswith(_canopy_base() + "/git/")
 
 
 def is_stored_clone(clone: str) -> bool:
+    """Origin under the canopy base's /git/ (or canopy://); a dir from another canopy-web
+    (staging) by its url's shape plus the canopy.slug the sync records."""
     rc, url, _ = run(["git", "config", "--get", "remote.origin.url"], 10, cwd=clone)
-    return rc == 0 and url.startswith(STORED_ORIGIN)
+    if rc != 0:
+        return False
+    if is_canopy_origin(url):
+        return True
+    if not _CANOPY_GIT_RE.match(url.strip()):
+        return False
+    rc, slug, _ = run(["git", "config", "--get", "canopy.slug"], 10, cwd=clone)
+    return rc == 0 and bool(slug)
 
 
 def _update_stored(target: dict, result: dict, clone: str) -> dict:
@@ -587,6 +612,8 @@ def _update_stored(target: dict, result: dict, clone: str) -> dict:
         why = (err or out or str(rc)).strip().splitlines()
         result.update(status="error", error=f"sync: {why[-1] if why else rc}"[:300])
         return result
+    if not is_stored_clone(clone):
+        return None  # exported to GitHub: the sync repointed origin; the ordinary path runs
     rc, head, err = run(["git", "rev-parse", "HEAD"], 10, cwd=clone)
     if rc != 0 or not head:
         result.update(status="error", error=f"rev-parse HEAD: {err or rc}")
@@ -598,7 +625,7 @@ def _update_stored(target: dict, result: dict, clone: str) -> dict:
         if not lock.held:
             result.update(status="up-to-date")
             return result
-        # Already on main at HEAD (materialize put it there): the reset is a no-op.
+        # Already on main at origin/main (the sync reset it there): the reset is a no-op.
         return _update_behind(target, result, clone, "main", head)
 
 

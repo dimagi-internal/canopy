@@ -13,7 +13,7 @@ the logic that needs a person's machine (a terminal); a box runs the same code a
 | The agent's canopy identity | canopy-web `POST /api/agents/<slug>/canopy-login` (sealed into canopy vault, never shown) | Settings → Security → **Give it its canopy login** |
 | Use an agent yourself, no runner | `canopy agent use <slug>` (`src/orchestrator/agent_use.py`) | a person on their own computer ([running-an-agent.md](../running-an-agent.md)) |
 | Make an agent runnable here | `canopy agent prepare` (`src/orchestrator/agent_prepare.py`; person mode is `canopy agent bootstrap`) | cloud box bootstrap and each claim; laptop runner at claim |
-| A stored agent's files (no repo) | `canopy agent materialize` / `agent sync` (`src/orchestrator/agent_materialize.py`; [stored-agents.md](stored-agents.md)) | `agent prepare --runner` step 1, the fleet updater, `canopy agent use` |
+| A stored agent's files (a git repo hosted by canopy-web) | `canopy agent materialize` / `agent sync` (`src/orchestrator/agent_materialize.py`; [stored-agents.md](stored-agents.md)) | `agent prepare --runner` step 1, the fleet updater, `canopy agent use` |
 | Is it working | fleet facts: canopy-web `agent_setup` (+ `readiness`); this machine: `canopy agent doctor` | the doctor's `canopy-web setup` check (`src/orchestrator/agent_doctor.py::check_setup`) reads `agent_setup` |
 
 `agent_prepare.py`'s module docstring lists its steps in order and the two credential modes (person vs

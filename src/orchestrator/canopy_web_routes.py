@@ -59,6 +59,8 @@ ALLOWED_MISSING: dict = {
     ("POST", "/api/agents/{}/definition/rollback"): _STORED,
     ("GET", "/api/agents/{}/definition/revisions/{}/files/{}"): _STORED,
     ("GET", "/api/agents/{}/definition/revisions/{}/diff"): _STORED,
+    ("POST", "/api/agents/{}/definition/export"): _STORED,
+    ("POST", "/api/agents/{}/definition/detach"): _STORED,
 }
 
 _NOT_PATH_BUILDERS = frozenset({"quote", "quote_plus", "urlencode", "str", "int", "get", "dumps"})

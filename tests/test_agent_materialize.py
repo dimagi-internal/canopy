@@ -1,16 +1,20 @@
-"""Materializing a stored agent's revision (orchestrator/agent_materialize.py).
+"""Materializing a stored agent (orchestrator/agent_materialize.py): a clone of canopy-web's
+git repo for the agent.
 
-The contract (docs/architecture/stored-agents.md): one revision → one commit sha on every
-machine; HEAD == main == origin/main; origin canopy://<ws>/<slug>; the root is verified
-before anything is written; untracked/ignored files survive; tracked files absent from the
-revision are deleted. canopy-web is faked at the HTTP layer.
+The contract (docs/architecture/stored-agents.md): origin = the canopy git url; the token is
+passed per command and never lands in .git/config or the url; `reset --hard origin/main`
+(or r<N>); untracked/ignored files survive and tracked files absent from the revision go;
+the JSON line {slug, revision, root_sha256, commit, changed}; a `canopy://` dir from the old
+archive writer is converted in place; an exported agent's dir is pointed at its repo.
+
+canopy-web's git endpoint is REAL git (`git http-backend`) behind the auth rule
+(tests/git_http_fake.py); its JSON API is faked by passing `git_url` / `info`.
 """
 from __future__ import annotations
 
-import io
 import json
+import os
 import subprocess
-import tarfile
 from pathlib import Path
 
 import pytest
@@ -18,8 +22,9 @@ from click.testing import CliRunner
 
 from orchestrator import agent_materialize as am
 from orchestrator.agent_definition import file_entry, manifest_root
+from tests.git_http_fake import GitHttpFake, http_backend
 
-PUBLISHED = "2026-11-21T10:00:00Z"
+pytestmark = pytest.mark.skipif(not http_backend(), reason="needs git http-backend")
 
 REV1 = {
     "CLAUDE.md": (b"# helper\n", False),
@@ -34,52 +39,12 @@ REV2 = {
     "persona.md": (b"voice\n", False),
 }
 
-#: Pinned: REV1 at revision 1 published PUBLISHED. If this moves, every machine's commit for
-#: an already-published revision moves with it — which `refresh_plugin` reads as an update.
-REV1_COMMIT = "2809c7641f59984cec51dc1f79fdfbce8c449a93"
 
-
-def make_tar(files: dict) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        for path, (content, executable) in sorted(files.items()):
-            info = tarfile.TarInfo(path)
-            info.size = len(content)
-            info.mode = 0o755 if executable else 0o644
-            info.mtime = 0
-            tf.addfile(info, io.BytesIO(content))
-    return buf.getvalue()
+TOK = "cnpy-T0KEN-4f9e1c"
 
 
 def root_of(files: dict) -> str:
     return manifest_root([file_entry(p, c, x) for p, (c, x) in files.items()])
-
-
-class FakeWeb:
-    """GET /definition/archive (and /definition, /api/agents/<slug>/)."""
-
-    def __init__(self, files: dict, revision: int = 1, *, root: str = "", workspace="connect"):
-        self.set(files, revision, root=root)
-        self.workspace = workspace
-        self.archive_calls = 0
-
-    def set(self, files, revision, *, root=""):
-        self.files, self.revision = files, revision
-        self.root = root or root_of(files)
-
-    def fetch(self, url, headers):
-        assert headers["Authorization"] == "Bearer tok"
-        assert "/api/agents/helper/definition/archive?revision=" in url
-        self.archive_calls += 1
-        return 200, {"X-Canopy-Revision": str(self.revision), "X-Canopy-Root-Sha256": self.root,
-                     "X-Canopy-Published-At": PUBLISHED,
-                     "X-Canopy-Workspace": self.workspace}, make_tar(self.files)
-
-
-@pytest.fixture(autouse=True)
-def _no_live_root(monkeypatch):
-    # By default canopy-web's /definition is unreadable (a runner token): fetch every time.
-    monkeypatch.setattr(am, "live_root", lambda slug, **kw: {})
 
 
 def git(repo: Path, *args: str) -> str:
@@ -87,193 +52,216 @@ def git(repo: Path, *args: str) -> str:
                           check=True).stdout.strip()
 
 
-def run(dest: Path, web: FakeWeb, **kw) -> dict:
-    return am.materialize("helper", dest, base_url="https://web.test", token="tok",
-                          fetch=web.fetch, **kw)
+@pytest.fixture
+def srv(tmp_path):
+    fake = GitHttpFake(tmp_path / "srv", token=TOK).start()
+    yield fake
+    fake.stop()
 
 
-def test_same_revision_same_sha_on_two_machines(tmp_path):
-    a = run(tmp_path / "a" / "helper", FakeWeb(REV1))
-    b = run(tmp_path / "b" / "helper", FakeWeb(REV1))
-    assert a["commit"] == b["commit"]
-    assert a == {"slug": "helper", "revision": 1, "root_sha256": root_of(REV1),
-                 "commit": a["commit"], "changed": True}
+def run(dest: Path, srv: GitHttpFake, **kw) -> dict:
+    kw.setdefault("git_url", srv.url("connect", "helper"))
+    return am.materialize("helper", dest, base_url=srv.base, token=TOK, **kw)
 
 
-def test_commit_shape_is_pinned(tmp_path):
-    out = run(tmp_path / "helper", FakeWeb(REV1))
-    repo = tmp_path / "helper"
-    raw = git(repo, "cat-file", "-p", out["commit"])
-    assert "parent" not in raw
-    assert "author canopy <agents@canopy.dimagi.com> 1795255200 +0000" in raw
-    assert "committer canopy <agents@canopy.dimagi.com> 1795255200 +0000" in raw
-    assert raw.endswith("canopy revision 1")
-    modes = git(repo, "ls-tree", "-r", out["commit"])
-    assert "100755 blob" in [ln for ln in modes.splitlines() if "bin/helper-email" in ln][0]
-    assert all(ln.startswith(("100644", "100755")) for ln in modes.splitlines())
-    assert out["commit"] == REV1_COMMIT
+def test_clone_is_at_live_with_origin_the_git_url(tmp_path, srv):
+    sha = srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "agents" / "helper"
+    out = run(dest, srv)
+    assert out == {"slug": "helper", "revision": 1, "root_sha256": root_of(REV1),
+                   "commit": sha, "changed": True}
+    assert git(dest, "rev-parse", "HEAD") == git(dest, "rev-parse", "origin/main") == sha
+    assert git(dest, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert git(dest, "remote", "get-url", "origin") == srv.url("connect", "helper")
+    assert git(dest, "symbolic-ref", "refs/remotes/origin/HEAD") == "refs/remotes/origin/main"
+    assert os.access(dest / "bin" / "helper-email", os.X_OK)
+    assert am.is_stored_clone(dest)
+    assert am.recorded(dest) == {"revision": 1, "root_sha256": root_of(REV1), "commit": sha}
+    # No staging dir left behind; the lock sits beside the dest.
+    assert sorted(p.name for p in dest.parent.iterdir()) == [".helper.materialize.lock", "helper"]
 
 
-def test_refs_and_origin(tmp_path):
-    out = run(tmp_path / "helper", FakeWeb(REV1))
-    repo = tmp_path / "helper"
-    assert git(repo, "rev-parse", "HEAD") == out["commit"]
-    assert git(repo, "rev-parse", "refs/heads/main") == out["commit"]
-    assert git(repo, "rev-parse", "refs/remotes/origin/main") == out["commit"]
-    assert git(repo, "symbolic-ref", "HEAD") == "refs/heads/main"
-    assert git(repo, "rev-parse", "--abbrev-ref", "origin/HEAD") == "origin/main"
-    assert git(repo, "remote", "get-url", "origin") == "canopy://connect/helper"
-    assert am.is_stored_clone(repo)
-    assert (repo / "bin" / "helper-email").stat().st_mode & 0o111
+def test_the_token_is_never_written_to_the_repo(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    run(dest, srv)
+    assert all(s["auth"] == f"Bearer {TOK}" for s in srv.seen)
+    for f in (dest / ".git").rglob("*"):
+        if f.is_file():
+            assert TOK.encode() not in f.read_bytes(), f
+    assert "Bearer" not in (dest / ".git" / "config").read_text()
+    assert TOK not in git(dest, "remote", "get-url", "origin")
 
 
-def test_off_release_branch_and_refresh_see_head_on_origin_main(tmp_path):
-    import importlib.util
-    hook = Path(__file__).resolve().parents[1] / "plugins/canopy/hooks/fleet_session_start_update.py"
-    spec = importlib.util.spec_from_file_location("fssu_mat", hook)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    run(tmp_path / "helper", FakeWeb(REV1))
-    assert mod.off_release_branch(str(tmp_path / "helper")) == ""
+def test_a_wrong_token_is_refused_and_writes_nothing(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    with pytest.raises(am.MaterializeError):
+        am.materialize("helper", dest, base_url=srv.base, token="nope",
+                       git_url=srv.url("connect", "helper"))
+    assert not dest.exists()
+    assert [p.name for p in tmp_path.iterdir() if p.name != "srv"] == [".helper.materialize.lock"]
 
 
-def test_untracked_and_ignored_survive_and_removed_files_go(tmp_path):
-    repo = tmp_path / "helper"
-    web = FakeWeb(REV1)
-    run(repo, web)
-    (repo / ".env").write_text("SECRET=1\n")
-    (repo / "node_modules").mkdir()
-    (repo / "node_modules" / "x.js").write_text("x")
-    (repo / "scratch.txt").write_text("mine")
-    web.set(REV2, 2)
-    out = run(repo, web)
-    assert out["changed"] is True and out["revision"] == 2
-    assert not (repo / "skills").exists()                     # tracked, gone from rev 2
-    assert (repo / "persona.md").read_text() == "voice\n"
-    assert (repo / "CLAUDE.md").read_text() == "# helper v2\n"
-    assert (repo / ".env").read_text() == "SECRET=1\n"
-    assert (repo / "node_modules" / "x.js").exists()
-    assert (repo / "scratch.txt").read_text() == "mine"
-    assert git(repo, "rev-parse", "refs/remotes/origin/main") == out["commit"]
-    assert git(repo, "rev-list", "--count", "HEAD") == "1"     # orphan, every time
+def test_untracked_and_ignored_survive_and_removed_files_go(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    run(dest, srv)
+    (dest / ".env").write_text("SECRET=1")
+    (dest / "node_modules").mkdir()
+    (dest / "node_modules" / "x.js").write_text("x")
+    (dest / "scratch.txt").write_text("mine")
+    sha2 = srv.publish("connect", "helper", REV2, 2)
+    out = run(dest, srv)
+    assert out["changed"] is True and out["revision"] == 2 and out["commit"] == sha2
+    assert out["root_sha256"] == root_of(REV2)
+    assert not (dest / "skills" / "turn" / "SKILL.md").exists()
+    assert (dest / "persona.md").read_text() == "voice\n"
+    assert (dest / ".env").read_text() == "SECRET=1"
+    assert (dest / "node_modules" / "x.js").exists()
+    assert (dest / "scratch.txt").read_text() == "mine"
+    # History, not one orphan per revision: r2's parent is r1.
+    assert git(dest, "rev-parse", "HEAD^") == git(dest, "rev-parse", "r1")
 
 
-def test_noop_when_already_there(tmp_path):
-    repo = tmp_path / "helper"
-    web = FakeWeb(REV1)
-    first = run(repo, web)
-    again = run(repo, web)
+def test_noop_when_already_there(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    first = run(dest, srv)
+    again = run(dest, srv)
     assert again == {**first, "changed": False}
 
 
-def test_noop_without_download_when_live_root_matches(tmp_path, monkeypatch):
-    repo = tmp_path / "helper"
-    web = FakeWeb(REV1)
-    run(repo, web)
-    monkeypatch.setattr(am, "live_root", lambda slug, **kw: {"number": 1, "root_sha256": web.root})
-    out = run(repo, web)
-    assert out["changed"] is False and web.archive_calls == 1
-
-
-def test_edited_tracked_file_is_restored(tmp_path):
-    repo = tmp_path / "helper"
-    web = FakeWeb(REV1)
-    run(repo, web)
-    (repo / "CLAUDE.md").write_text("hand edit")
-    out = run(repo, web)
+def test_edited_tracked_file_is_restored(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    run(dest, srv)
+    (dest / "CLAUDE.md").write_text("local edit")
+    out = run(dest, srv)
     assert out["changed"] is True
-    assert (repo / "CLAUDE.md").read_text() == "# helper\n"
+    assert (dest / "CLAUDE.md").read_text() == "# helper\n"
 
 
-def test_bad_root_writes_nothing(tmp_path):
-    repo = tmp_path / "helper"
-    web = FakeWeb(REV1)
-    first = run(repo, web)
-    web.set(REV2, 2, root="0" * 64)
-    with pytest.raises(am.MaterializeError, match="do not match its root"):
-        run(repo, web)
-    assert (repo / "CLAUDE.md").read_text() == "# helper\n"
-    assert git(repo, "rev-parse", "HEAD") == first["commit"]
-    # A fresh dest: nothing at all, no staging dir left behind.
-    with pytest.raises(am.MaterializeError):
-        run(tmp_path / "fresh" / "helper", web)
-    assert not (tmp_path / "fresh" / "helper").exists()
-    assert not (tmp_path / "fresh").exists() or list((tmp_path / "fresh").iterdir()) == []
+def test_a_published_revision_by_number(tmp_path, srv):
+    sha1 = srv.publish("connect", "helper", REV1, 1)
+    srv.publish("connect", "helper", REV2, 2)
+    dest = tmp_path / "helper"
+    out = run(dest, srv, revision="1")
+    assert out["commit"] == sha1 and out["revision"] == 1
+    assert out["root_sha256"] == root_of(REV1)
+    with pytest.raises(am.MaterializeError, match="no published revision 7"):
+        run(dest, srv, revision="7")
 
 
-def test_http_error_writes_nothing(tmp_path):
-    def refuse(url, headers):
-        return 403, {}, b'{"detail":"no"}'
-    with pytest.raises(am.MaterializeError, match="403"):
-        am.materialize("helper", tmp_path / "helper", base_url="https://w", token="tok",
-                       fetch=refuse)
-    assert not (tmp_path / "helper").exists()
+def test_legacy_canopy_origin_dir_is_converted_in_place(tmp_path, srv):
+    """A dir the archive writer made: origin canopy://connect/helper, one orphan commit, no
+    git url recorded anywhere. It becomes a clone of the git url — workspace read from the
+    old origin when canopy-web's answer lacks git_url — with .env kept."""
+    dest = tmp_path / "helper"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(dest)], check=True)
+    (dest / "CLAUDE.md").write_text("orphan")
+    (dest / ".env").write_text("KEEP=1")
+    git(dest, "add", "CLAUDE.md")
+    git(dest, "-c", "user.name=canopy", "-c", "user.email=a@b", "-c", "commit.gpgsign=false",
+        "commit", "-qm", "canopy revision 1")
+    git(dest, "remote", "add", "origin", "canopy://connect/helper")
+    git(dest, "config", "canopy.slug", "helper")
+    git(dest, "config", "canopy.revision", "1")
+    assert am.is_stored_clone(dest)
+    sha = srv.publish("connect", "helper", REV1, 1)
+    out = am.materialize("helper", dest, base_url=srv.base, token=TOK,
+                         info={"source": "stored", "revision": 1})
+    assert out["commit"] == sha and out["changed"] is True and out["revision"] == 1
+    assert git(dest, "remote", "get-url", "origin") == srv.url("connect", "helper")
+    assert (dest / "CLAUDE.md").read_text() == "# helper\n"
+    assert (dest / ".env").read_text() == "KEEP=1"
+    assert am.is_stored_clone(dest)
 
 
-@pytest.mark.parametrize("name", ["../escape", "/abs", ".git/config", "a/../../b"])
-def test_tar_paths_that_escape_are_refused(name):
-    with pytest.raises(am.MaterializeError):
-        am.read_tar(make_tar({name: (b"x", False)}))
-
-
-def test_tar_symlink_refused():
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        info = tarfile.TarInfo("link")
-        info.type = tarfile.SYMTYPE
-        info.linkname = "/etc/passwd"
-        tf.addfile(info)
-    with pytest.raises(am.MaterializeError, match="not a regular file"):
-        am.read_tar(buf.getvalue())
-
-
-def test_requested_revision_must_match(tmp_path):
-    web = FakeWeb(REV1, 3)
-    with pytest.raises(am.MaterializeError, match="asked for revision 2"):
-        run(tmp_path / "helper", web, revision="2")
-
-
-def test_existing_github_clone_is_converted_in_place(tmp_path):
-    repo = tmp_path / "helper"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    (repo / "old.txt").write_text("tracked before")
-    (repo / ".env").write_text("keep")
-    subprocess.run(["git", "-C", str(repo), "add", "old.txt"], check=True)
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=x", "-c", "user.email=x@x",
-                    "commit", "-qm", "old"], check=True)
-    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
-                    "https://github.com/o/helper"], check=True)
-    out = run(repo, FakeWeb(REV1))
-    assert not (repo / "old.txt").exists()
-    assert (repo / ".env").read_text() == "keep"
-    assert git(repo, "remote", "get-url", "origin") == "canopy://connect/helper"
+def test_existing_github_clone_is_converted_in_place(tmp_path, srv):
+    dest = tmp_path / "helper"
+    subprocess.run(["git", "init", "-q", str(dest)], check=True)
+    (dest / "old.txt").write_text("tracked before")
+    (dest / ".env").write_text("keep")
+    git(dest, "add", "old.txt")
+    git(dest, "-c", "user.name=x", "-c", "user.email=x@x", "-c", "commit.gpgsign=false",
+        "commit", "-qm", "old")
+    git(dest, "remote", "add", "origin", "https://github.com/o/helper")
+    srv.publish("connect", "helper", REV1, 1)
+    out = run(dest, srv)
+    assert not (dest / "old.txt").exists()
+    assert (dest / ".env").read_text() == "keep"
+    assert git(dest, "remote", "get-url", "origin") == srv.url("connect", "helper")
     assert out["changed"] is True
 
 
-def test_git_date_forms():
-    assert am.git_date("2026-11-21T10:00:00Z") == "1795255200 +0000"
-    assert am.git_date("2026-11-21T10:00:00.987654+00:00") == "1795255200 +0000"
-    assert am.git_date("2026-11-21T11:00:00+01:00") == "1795255200 +0000"
-    assert am.git_date("Fri, 21 Nov 2026 10:00:00 GMT") == "1795255200 +0000"
-    with pytest.raises(am.MaterializeError):
-        am.git_date("yesterday")
+def test_exported_agent_dir_is_repointed_at_its_repo(tmp_path, srv):
+    srv.publish("connect", "helper", REV1, 1)
+    dest = tmp_path / "helper"
+    run(dest, srv)
+    head = git(dest, "rev-parse", "HEAD")
+    out = am.materialize("helper", dest, base_url=srv.base, token=TOK,
+                         info={"source": "repo", "repo_url": "https://github.com/o/helper"})
+    assert out["source"] == "repo" and out["commit"] == head and out["changed"] is False
+    assert git(dest, "remote", "get-url", "origin") == "https://github.com/o/helper.git"
+    assert not am.is_stored_clone(dest)
+    assert am.recorded(dest) == {}
+    with pytest.raises(am.ExportedAgent, match="github.com/o/helper"):
+        am.materialize("helper", tmp_path / "fresh", base_url=srv.base, token=TOK,
+                       info={"source": "repo", "repo_url": "https://github.com/o/helper"})
+
+
+def test_git_url_comes_from_canopy_web(tmp_path, srv, monkeypatch):
+    srv.publish("connect", "helper", REV1, 1)
+    calls = []
+
+    def call(method, path, body=None, **kw):
+        calls.append(path)
+        assert kw["token"] == TOK
+        if path.endswith("/runtime"):
+            return {"repo_url": "", "definition": {"source": "stored", "revision": 1,
+                                                    "git_url": srv.url("connect", "helper")}}
+        raise AssertionError(path)
+    monkeypatch.setattr(am.canopy_web, "call", call)
+    out = am.materialize("helper", tmp_path / "helper", base_url=srv.base, token=TOK)
+    assert out["revision"] == 1 and calls == ["/api/agents/helper/runtime"]
+
+
+def test_is_canopy_git_url(monkeypatch):
+    monkeypatch.setenv("CANOPY_WEB_API_URL", "https://canopy.example")
+    assert am.is_canopy_git_url("https://canopy.example/git/connect/helper.git")
+    assert am.is_canopy_git_url("canopy://connect/helper")
+    assert not am.is_canopy_git_url("https://github.com/o/helper.git")
+    assert not am.is_canopy_git_url("https://evil.example/git/connect/helper.git")
+
+
+def test_auth_env_appends_to_existing_command_config():
+    env = am.auth_env("https://canopy.example/git/w/s.git", "T",
+                      {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b",
+                       "GIT_CONFIG_VALUE_0": "c"})
+    assert env["GIT_CONFIG_KEY_0"] == "a.b"
+    assert env["GIT_CONFIG_KEY_1"] == "http.https://canopy.example/.extraHeader"
+    assert env["GIT_CONFIG_VALUE_1"] == "Authorization: Bearer T"
+    assert env["GIT_CONFIG_KEY_2"] == "credential.helper" and env["GIT_CONFIG_VALUE_2"] == ""
+    assert env["GIT_CONFIG_COUNT"] == "3" and env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 # ── the CLI ──────────────────────────────────────────────────────────────────────────────
 
-def _cli(monkeypatch, web):
+def _cli(monkeypatch, srv):
     real = am.materialize
 
     def fake(slug, dest, **kw):
-        return real(slug, dest, base_url="https://web.test", token="tok", fetch=web.fetch,
+        return real(slug, dest, base_url=srv.base, token=TOK,
+                    git_url=srv.url("connect", slug),
                     **{k: v for k, v in kw.items() if k in ("revision",)})
     monkeypatch.setattr(am, "materialize", fake)
 
 
-def test_cli_materialize_prints_one_json_line(tmp_path, monkeypatch):
+def test_cli_materialize_prints_one_json_line(tmp_path, monkeypatch, srv):
     from orchestrator.cli import main
-    _cli(monkeypatch, FakeWeb(REV1))
+    srv.publish("connect", "helper", REV1, 1)
+    _cli(monkeypatch, srv)
     res = CliRunner().invoke(main, ["agent", "materialize", "--slug", "helper", "--dest",
                                     str(tmp_path / "helper"), "--runner"])
     assert res.exit_code == 0, res.output
@@ -283,26 +271,28 @@ def test_cli_materialize_prints_one_json_line(tmp_path, monkeypatch):
     assert set(body) == {"slug", "revision", "root_sha256", "commit", "changed"}
 
 
-def test_cli_sync_runner_uses_agent_root(tmp_path, monkeypatch):
+def test_cli_sync_runner_uses_agent_root(tmp_path, monkeypatch, srv):
     from orchestrator.cli import main
-    web = FakeWeb(REV1)
-    _cli(monkeypatch, web)
+    srv.publish("connect", "helper", REV1, 1)
+    _cli(monkeypatch, srv)
     monkeypatch.setenv("AGENT_ROOT", str(tmp_path / "agents"))
+    monkeypatch.setenv("CANOPY_WEB_API_URL", srv.base)
     r1 = CliRunner().invoke(main, ["agent", "sync", "--runner", "--slug", "helper"])
     assert r1.exit_code == 0, r1.output
     assert json.loads(r1.output)["changed"] is True
     assert (tmp_path / "agents" / "helper" / "CLAUDE.md").exists()
     r2 = CliRunner().invoke(main, ["agent", "sync", "--runner", "--slug", "helper"])
+    assert r2.exit_code == 0, r2.output
     assert json.loads(r2.output)["changed"] is False
 
 
-def test_cli_sync_refuses_a_github_clone(tmp_path, monkeypatch):
+def test_cli_sync_refuses_a_github_clone(tmp_path, monkeypatch, srv):
     from orchestrator.cli import main
     repo = tmp_path / "helper"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/o/r"],
                    check=True)
-    _cli(monkeypatch, FakeWeb(REV1))
+    _cli(monkeypatch, srv)
     res = CliRunner().invoke(main, ["agent", "sync", "--slug", "helper", "--dest", str(repo)])
     assert res.exit_code != 0 and "not a stored agent" in res.output
 

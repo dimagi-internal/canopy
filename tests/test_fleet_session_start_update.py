@@ -889,34 +889,30 @@ def _stored_rev(n: int, skill: str) -> dict:
 
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_update_one_syncs_a_stored_agent_instead_of_fetching(tmp_path, monkeypatch):
-    import io
-    import tarfile
-
     from orchestrator import agent_materialize as am
-    from orchestrator.agent_definition import file_entry, manifest_root
+    from tests.git_http_fake import GitHttpFake, http_backend
 
+    if not http_backend():
+        pytest.skip("needs git http-backend")
+    srv = GitHttpFake(tmp_path / "srv", token="T").start()
+    try:
+        _stored_update_flow(tmp_path, monkeypatch, am, srv)
+    finally:
+        srv.stop()
+
+
+def _stored_update_flow(tmp_path, monkeypatch, am, srv):
     plugins_dir = tmp_path / "plugins"
     plugins_dir.mkdir()
     registry_path = plugins_dir / "installed_plugins.json"
     monkeypatch.setattr(flu, "PLUGINS_DIR", plugins_dir)
     monkeypatch.setattr(flu, "REGISTRY", registry_path)
-    monkeypatch.setattr(am, "live_root", lambda slug, **kw: {})
-    live = {"n": 1, "files": _stored_rev(1, "v1")}
-
-    def fetch(url, headers):
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-            for p, (c, x) in sorted(live["files"].items()):
-                info = tarfile.TarInfo(p)
-                info.size, info.mode = len(c), 0o755 if x else 0o644
-                tf.addfile(info, io.BytesIO(c))
-        root = manifest_root([file_entry(p, c, x) for p, (c, x) in live["files"].items()])
-        return 200, {"X-Canopy-Revision": str(live["n"]), "X-Canopy-Root-Sha256": root,
-                     "X-Canopy-Published-At": f"2026-11-2{live['n']}T00:00:00Z"}, buf.getvalue()
+    monkeypatch.setenv("CANOPY_WEB_API_URL", srv.base)
+    srv.publish("connect", "helper", _stored_rev(1, "v1"), 1)
 
     def sync(dest):
-        return am.materialize("helper", Path(dest), base_url="https://w", token="t", fetch=fetch,
-                              workspace="connect")
+        return am.materialize("helper", Path(dest), base_url=srv.base, token="T",
+                              git_url=srv.url("connect", "helper"))
 
     clone = plugins_dir / "marketplaces" / "helper"
     old = sync(clone)
@@ -944,18 +940,62 @@ def test_update_one_syncs_a_stored_agent_instead_of_fetching(tmp_path, monkeypat
     assert flu.is_stored_clone(str(clone))
     assert flu.update_one(target)["status"] == "up-to-date"        # nothing published since
 
-    live.update(n=2, files=_stored_rev(2, "v2"))
+    srv.publish("connect", "helper", _stored_rev(2, "v2"), 2)
     result = flu.update_one(target)
     assert result["status"] == "updated", result
     assert result["new_ver"] == "0.2.0"
     new_cache = plugins_dir / "cache" / "helper" / "helper" / "0.2.0"
     assert (new_cache / "skills" / "s" / "SKILL.md").read_text() == "v2"
+    # The updater itself never fetches a canopy origin (it has no token to send).
     assert not any(c[:2] == ["git", "fetch"] for c in calls)
     entry = json.loads(registry_path.read_text())["plugins"]["helper@helper"][0]
     assert entry["gitCommitSha"] == _rev(clone) and entry["installPath"] == str(new_cache)
 
-    # And `--refresh` (what a runner calls after its own sync) accepts the materialized HEAD.
+    # And `--refresh` (what a runner calls after its own sync) accepts the synced HEAD.
     assert flu.off_release_branch(str(clone)) == ""
+
+
+def test_is_stored_clone_recognises_canopy_git_origins(tmp_path, monkeypatch):
+    monkeypatch.setenv("CANOPY_WEB_API_URL", "https://canopy.example")
+    cases = {"https://canopy.example/git/connect/helper.git": True,
+             "canopy://connect/helper": True,
+             "https://github.com/o/helper.git": False,
+             # Another canopy-web (staging): by shape, and only with the slug the sync records.
+             "https://staging.example/git/connect/helper.git": False}
+    for i, (url, want) in enumerate(cases.items()):
+        c = tmp_path / str(i)
+        c.mkdir()
+        _git(c, "init", "-b", "main")
+        _git(c, "remote", "add", "origin", url)
+        assert flu.is_stored_clone(str(c)) is want, url
+    _git(tmp_path / "3", "config", "canopy.slug", "helper")
+    assert flu.is_stored_clone(str(tmp_path / "3"))
+
+
+def test_update_one_exported_agent_takes_the_ordinary_path(tmp_path, monkeypatch):
+    """The sync repointed origin at GitHub (the agent was exported): update_one goes on to
+    the normal fetch path rather than reporting the stored result."""
+    clone = tmp_path / "c"
+    clone.mkdir()
+    _git(clone, "init", "-b", "main")
+    _git(clone, "remote", "add", "origin", "canopy://connect/helper")
+    real_run = flu.run
+    fetched = []
+
+    def fake_run(cmd, timeout, cwd=None):
+        if cmd[0] == "CANOPY":
+            _git(clone, "remote", "set-url", "origin", "https://github.com/o/helper.git")
+            return 0, "{}", ""
+        if cmd[:2] == ["git", "fetch"]:
+            fetched.append(cmd)
+            return 1, "", "no network in tests"
+        return real_run(cmd, timeout, cwd)
+
+    monkeypatch.setattr(flu, "run", fake_run)
+    monkeypatch.setattr(flu, "_which", lambda name: "CANOPY" if name == "canopy" else None)
+    r = flu.update_one({"key": "helper@helper", "name": "helper", "marketplace": "helper",
+                        "install_path": "", "version": "0.1.0", "sha": "", "clone": str(clone)})
+    assert fetched and r["status"] == "error" and r["error"].startswith("fetch")
 
 
 def test_update_one_stored_agent_without_a_cli_says_so(tmp_path, monkeypatch):
