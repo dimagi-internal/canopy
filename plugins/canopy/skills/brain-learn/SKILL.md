@@ -37,7 +37,10 @@ Call `who_is_asking` with the `turn_id` the Turn Context at the top of the conve
 - `accountable`: `{email, name}`, the person the run answers to. Your outbound work under §5 is on their behalf, under
   the agent's turn mode: anything that needs their approval on an ordinary turn needs it here.
 - `sessions_due` and `source_ids_due`: how many sources this run may still read, and their ids. Ids only; their words
-  come through `brain_read`.
+  come through `brain_read`. `lookback_days`: only sessions active that recently are due, most recent first.
+- `open_findings` (and `open_findings_total`): the findings this learner already holds open for this target, each
+  `{id, kind, key, title, seen, last_seen_at}`, most recently seen first. **Read them before you emit** (§3): a problem
+  already among them is a repeat, not a new finding. (The prompt lists them too.)
 - `budget`: `max_sources_per_run`, `max_outputs_per_run`, `sources_left`, `outputs_left`. The run stops at it (§6).
 
 If `brain_run` is missing or the envelope cannot be read, carry on from the prompt's lines: `brain_read` still names
@@ -92,7 +95,15 @@ Default is **not an output**. A candidate becomes one only when it has all of th
   person saying so). `inferred` = your reading of why. Never state an inferred cause as fact.
 
 Merge candidates that are the same thing across sources into one output with every source's evidence.
-Two solid outputs beat six thin ones.
+Two solid outputs beat six thin ones. **Never two outputs for one problem in a run**: "agents hand work back",
+"agents ask before acting" and "agents stop short of done" seen in three sessions are one finding with three pieces of
+evidence, not three findings.
+
+**Check the open findings first.** For each qualified candidate, look through `open_findings` (§1): when one is the
+same problem (the same failure or friction, whatever words it was written in, e.g. "zsh globs break commands" and "zsh
+shell traps on the mac runner"), emit it **as a repeat of that one**: send that finding's `key`, or `same_as` set to
+its `id`. It folds in (more evidence, `seen` + 1, newer words) instead of becoming a second finding. Mint a new `key`
+only for a problem none of them is.
 
 Then call `brain_emit` once per output:
 
@@ -107,8 +118,11 @@ Then call `brain_emit` once per output:
   `canopy-web:friction:mcp-422-shape` or `ace:dropped_step:phase3-review` (where the fix belongs, the signal, a few
   words; no names, no quotes). An output of the same kind and key that is still open or accepted for this learner and
   subject takes this one in as a repeat (`folded: true` in the answer): it counts the sighting and keeps the newer
-  words, and costs nothing of the budget. Reuse a key you saw only when it is truly the same thing. If an older
-  canopy-web refuses `key` as unknown, send the output once more without it.
+  words, and costs nothing of the budget. Reuse the key of an open finding whenever it is the same problem, and a key
+  you saw only when it is truly the same thing. If an older canopy-web refuses `key` as unknown, send the output once
+  more without it.
+- `same_as` (optional): the `id` of the open finding this one repeats. It folds there whatever the `key`. Refused
+  (422) if that id is not an open finding of this learner here: then send it with a key instead.
 
 **When to emit.** When reading is done. In a long run, emit qualified outputs earlier rather than
 risk losing them to the budget, and don't emit one again (the same output twice counts once, but a

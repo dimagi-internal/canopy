@@ -107,3 +107,12 @@ def test_it_emits_first_acts_within_its_rails_and_stops_cleanly() -> None:
 def test_the_retired_brain_preview_stays_gone() -> None:
     assert "brain" not in main.commands
     assert not (ROOT / "plugins" / "canopy" / "skills" / "brain-preview").exists()
+
+
+def test_checks_the_open_findings_and_reuses_their_keys() -> None:
+    """canopy-web tells a run the open findings its learner holds (`brain_run.open_findings`) and folds an emit that
+    names one by `key` or `same_as`: the skill must check them before minting a key, or each run re-files them."""
+    _meta, _front, body = _parts()
+    for word in ("`open_findings`", "`same_as`", "`lookback_days`", "Check the open findings first",
+                 "Never two outputs for one problem"):
+        assert word in body, word
