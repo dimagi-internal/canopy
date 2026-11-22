@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -233,7 +234,7 @@ def plan_convert(repo: Path, slug: str) -> dict:
     return {"upload": upload, "generated": generated, "refused": refused}
 
 
-#: canopy-web's request cap (Django DATA_UPLOAD_MAX_MEMORY_SIZE, 2.5 MB) less slack: a convert
+#: canopy-web's request cap (Django DATA_UPLOAD_MAX_MEMORY_SIZE, 2.5 MB) less slack: an upload
 #: body above this is refused here rather than by a 413.
 MAX_CONVERT_BODY = 2_400_000
 
@@ -251,6 +252,46 @@ def history_bundle(repo: Path) -> bytes:
         err = (r.stderr or b"").decode("utf-8", "replace").strip()
         raise click.ClickException(f"git bundle create: {err.splitlines()[-1] if err else r.returncode}")
     return r.stdout
+
+
+def repo_upload(repo: Path, slug: str, *, drop_refused: bool, with_history: bool,
+                dry_run: bool = False) -> tuple[dict, dict]:
+    """A local repo as an upload: ``(summary, body)``, body carrying ``files`` and, with
+    ``with_history``, ``bundle_b64``. Shared by `convert --from` and `create-agent --stored
+    --from`. Refuses before upload on a policy problem, on a refused tracked file unless
+    ``drop_refused`` (then it is left out), and above :data:`MAX_CONVERT_BODY`. ``dry_run``
+    returns the summary without refusing, and an empty body."""
+    plan = plan_convert(repo, slug)
+    check = {f["path"]: {"content": f["content"]} for f in plan["upload"]}
+    problems = check_tree(check, slug)
+    summary = {"slug": slug, "upload": [f["path"] for f in plan["upload"]],
+               "generated_by_canopy_web": plan["generated"],
+               "refused": [f"{p}: {why}" for p, why in plan["refused"]],
+               "problems": problems}
+    bundle = history_bundle(repo) if with_history else b""
+    if with_history:
+        summary["history_bundle_bytes"] = len(bundle)
+    if dry_run:
+        return summary, {}
+    if problems:
+        raise click.ClickException("refused before upload:\n  " + "\n  ".join(problems))
+    if plan["refused"] and not drop_refused:
+        raise click.ClickException(
+            "these tracked files cannot be in a stored agent (re-run with --drop-refused to "
+            "leave them out):\n  " + "\n  ".join(summary["refused"]))
+    files = [{"path": f["path"], "content_b64": base64.b64encode(f["content"]).decode("ascii"),
+              "executable": False} for f in plan["upload"]]
+    body = {"files": files}
+    if with_history:
+        body["bundle_b64"] = base64.b64encode(bundle).decode("ascii")
+    size = len(json.dumps(body))
+    if size > MAX_CONVERT_BODY:
+        why = ("the history makes it " if with_history else "")
+        raise click.ClickException(
+            f"the upload is {size / 1e6:.1f} MB; canopy-web takes about "
+            f"{MAX_CONVERT_BODY / 1e6:.1f} MB — {why}too large"
+            + (": upload files-only (drop --with-history)" if with_history else ""))
+    return summary, body
 
 
 @definition.command("convert")
@@ -279,43 +320,18 @@ def definition_convert(from_dir, slug, message, drop_refused, with_history, dry_
                               .read_text(encoding="utf-8"))["name"]
         except (OSError, ValueError, KeyError) as e:
             raise click.ClickException(f"pass --slug (no plugin.json name in {repo}: {e})")
-    plan = plan_convert(repo, slug)
-    check = {f["path"]: {"content": f["content"]} for f in plan["upload"]}
-    problems = check_tree(check, slug)
-    summary = {"slug": slug, "upload": [f["path"] for f in plan["upload"]],
-               "generated_by_canopy_web": plan["generated"],
-               "refused": [f"{p}: {why}" for p, why in plan["refused"]],
-               "problems": problems}
-    bundle = history_bundle(repo) if with_history else b""
-    if with_history:
-        summary["history_bundle_bytes"] = len(bundle)
+    summary, body = repo_upload(repo, slug, drop_refused=drop_refused,
+                                with_history=with_history, dry_run=dry_run)
     if dry_run:
         click.echo(json.dumps(summary, indent=1))
         return
-    if problems:
-        raise click.ClickException("refused before upload:\n  " + "\n  ".join(problems))
-    if plan["refused"] and not drop_refused:
-        raise click.ClickException(
-            "these tracked files cannot be in a stored agent (re-run with --drop-refused to "
-            "leave them out):\n  " + "\n  ".join(summary["refused"]))
-    files = [{"path": f["path"], "content_b64": base64.b64encode(f["content"]).decode("ascii"),
-              "executable": False} for f in plan["upload"]]
-    body = {"files": files, "message": message}
-    if with_history:
-        body["bundle_b64"] = base64.b64encode(bundle).decode("ascii")
-    size = len(json.dumps(body))
-    if size > MAX_CONVERT_BODY:
-        why = ("the history makes it " if with_history else "")
-        raise click.ClickException(
-            f"the conversion is {size / 1e6:.1f} MB; canopy-web takes about "
-            f"{MAX_CONVERT_BODY / 1e6:.1f} MB — {why}too large"
-            + (": convert files-only (drop --with-history)" if with_history else ""))
+    body["message"] = message
     try:
         out = canopy_web.call("POST", f"/api/agents/{slug}/definition/convert", body)
     except _ERRORS as e:
         if with_history and "-> 413" in str(e):
             raise click.ClickException(f"{e}\ncanopy-web refused the history as too large: "
-                                       "convert files-only (drop --with-history)")
+                                       "upload files-only (drop --with-history)")
         raise click.ClickException(str(e))
     click.echo(json.dumps({**summary, "result": out}, indent=1))
 
@@ -495,3 +511,64 @@ def definition_export(slug, repo, ref, push_myself):
             raise _git_fail(r, f"git push {gh}")
     click.echo(json.dumps(_call("POST", f"{_base(slug)}/detach",
                                 {"repo_url": f"https://github.com/{repo}"}), indent=1))
+
+
+# ── create-agent --stored --from ────────────────────────────────────────────────────────
+
+_STATUS = re.compile(r"-> (\d{3}): (.*)\Z", re.S)
+
+#: The request fields `--from` adds; an older canopy-web refuses them as extra inputs.
+FROM_FIELDS = ("files", "bundle_b64", "drop_refused", "message")
+
+TOO_OLD = ("this canopy-web is too old for `create-agent --stored --from` (it does not take "
+           "files): create the agent without --from and add its files with "
+           "`canopy agent definition edit`, or retry once canopy-web is updated")
+
+
+def _error_body(e: Exception) -> tuple[int, str, dict]:
+    """``(status, raw body text, parsed JSON body or {})`` of a canopy_web error; status 0 when
+    it carries none. canopy_web cuts the body at 400 characters, so the JSON may not parse."""
+    m = _STATUS.search(str(e))
+    if not m:
+        return 0, str(e), {}
+    raw = m.group(2)
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        body = {}
+    return int(m.group(1)), raw, body if isinstance(body, dict) else {}
+
+
+def is_too_old_refusal(status: int, raw: str) -> bool:
+    """A 422 validation error naming one of :data:`FROM_FIELDS` as an extra input."""
+    return status == 422 and ("extra_forbidden" in raw or "Extra inputs" in raw) and any(
+        f'"{f}"' in raw for f in FROM_FIELDS)
+
+
+def stored_create_error(e: Exception, slug: str, *, with_history: bool) -> click.ClickException:
+    """A `POST /api/agents/stored` failure, said in terms of what to do next."""
+    status, raw, body = _error_body(e)
+    err = body.get("error")
+    if is_too_old_refusal(status, raw):
+        return click.ClickException(TOO_OLD)
+    if status == 409 or err == "exists":
+        return click.ClickException(f"an agent called {slug} already exists: pick another slug")
+    if status == 413 or err == "too_large":
+        return click.ClickException(
+            "canopy-web refused the upload as too large (about 1.8 MB of files and history)"
+            + (": drop --with-history" if with_history else ""))
+    if err == "policy" or (status == 422 and '"policy"' in raw):
+        lines = [f"{p.get('path')}: {p.get('message') or p.get('code')}"
+                 for p in (body.get("problems") or []) if isinstance(p, dict)]
+        return click.ClickException(
+            "canopy-web refused these files (re-run with --drop-refused to leave them out):\n  "
+            + "\n  ".join(lines or [raw]))
+    if err == "secret" or (status == 422 and '"secret"' in raw):
+        return click.ClickException(
+            "canopy-web found a secret in the repo's history: drop --with-history to upload "
+            f"the files only, or rewrite the history ({body.get('detail') or raw})")
+    if status == 403:
+        return click.ClickException(
+            f"canopy-web refused to create {slug} ({body.get('detail') or body.get('title') or raw}): "
+            "creating an agent needs the editor role in the workspace, signed in as a person")
+    return click.ClickException(str(e))

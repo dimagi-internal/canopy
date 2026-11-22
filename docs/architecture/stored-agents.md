@@ -96,7 +96,12 @@ A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$C
   password, for canopy's host only), so a later `git pull` works with nothing stored. `--no-helper` leaves the
   config alone and prints the one-off `git -c credential.<host>.helper=… pull` form instead.
 - `canopy create-agent <slug> --mandate … --stored --workspace <ws>` creates one in canopy-web and writes nothing
-  locally.
+  locally. `--from <dir> [--with-history] [--drop-refused]` creates it WITH a local repo's files in the same
+  `POST /api/agents/stored`: the tracked files `convert` would upload go as `files` (content_b64), laid over the
+  scaffold as revision 1; `--with-history` adds `bundle_b64` (as `convert`); `--drop-refused` leaves out what the
+  local pre-check refuses and sends `drop_refused: true`, and the CLI prints both what it left out and the
+  response's `dropped`. 409 `exists`, 413 `too_large`, 422 `policy`/`secret` and 403 are said as what to do
+  next; a 422 naming `files` as an extra input, or a 201 with no `dropped`, means canopy-web predates `--from`.
 
 ## Moving between canopy and GitHub
 

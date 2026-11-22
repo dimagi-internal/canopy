@@ -146,6 +146,124 @@ def test_create_agent_stored_posts_and_writes_nothing(web, tmp_path, monkeypatch
     assert list(tmp_path.iterdir()) == []
 
 
+def _create_from(repo, *extra):
+    return CliRunner().invoke(main, ["create-agent", "connect-helper", "--mandate", "Help",
+                                     "--stored", "--workspace", "connect", "--from", str(repo),
+                                     *extra])
+
+
+class Stored(Web):
+    """canopy-web answering `POST /api/agents/stored` with ``reply`` (a dict, or an error)."""
+
+    def __init__(self, reply):
+        super().__init__()
+        self.reply = reply
+
+    def call(self, method, path, body=None, **kw):
+        self.calls.append((method, path, body))
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+@pytest.fixture
+def stored(monkeypatch):
+    def make(reply):
+        w = Stored(reply)
+        monkeypatch.setattr(canopy_web, "call", w.call)
+        return w
+    return make
+
+
+_CREATED = {"slug": "connect-helper", "name": "Connect Helper", "workspace": "connect",
+            "source": "stored", "revision": 1, "root_sha256": "abc123",
+            "owner": "jj@dimagi.com", "acted_by": "jj@dimagi.com", "dropped": []}
+
+
+def test_create_agent_stored_from_sends_the_tracked_files(stored, tmp_path):
+    w = stored(_CREATED)
+    res = _create_from(_repo(tmp_path), "--drop-refused")
+    assert res.exit_code == 0, res.output
+    (method, path, body), = w.calls
+    assert (method, path) == ("POST", "/api/agents/stored")
+    assert {k: body[k] for k in ("name", "slug", "mandate", "workspace")} == {
+        "name": "Connect Helper", "slug": "connect-helper", "mandate": "Help",
+        "workspace": "connect"}
+    assert sorted(f["path"] for f in body["files"]) == ["CLAUDE.md", "skills/turn/SKILL.md"]
+    by_path = {f["path"]: f for f in body["files"]}
+    assert base64.b64decode(by_path["CLAUDE.md"]["content_b64"]) == b"# helper\n"
+    assert body["drop_refused"] is True and body["message"] == "Created from helper"
+    assert "bundle_b64" not in body
+    assert "revision 1" in res.output and "root abc123" in res.output
+    assert "owner jj@dimagi.com" in res.output and "left out here: bin/_env.py" in res.output
+
+
+def test_create_agent_stored_from_refuses_a_refused_file_without_drop_refused(stored, tmp_path):
+    w = stored(_CREATED)
+    res = _create_from(_repo(tmp_path))
+    assert res.exit_code != 0 and "bin/_env.py" in res.output and "--drop-refused" in res.output
+    assert w.calls == []
+
+
+def test_create_agent_stored_from_with_history_sends_a_bundle(stored, tmp_path):
+    w = stored(_CREATED)
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "main"], check=True)
+    _commit(repo, "first")
+    res = _create_from(repo, "--drop-refused", "--with-history")
+    assert res.exit_code == 0, res.output
+    (_, _, body), = w.calls
+    bundle = tmp_path / "b.bundle"
+    bundle.write_bytes(base64.b64decode(body["bundle_b64"]))
+    heads = subprocess.run(["git", "bundle", "list-heads", str(bundle)], capture_output=True,
+                           text=True, check=True).stdout
+    assert heads.strip().endswith("refs/heads/main")
+
+
+def test_create_agent_stored_from_prints_what_canopy_web_dropped(stored, tmp_path):
+    stored({**_CREATED, "dropped": ["skills/turn/SKILL.md"]})
+    res = _create_from(_repo(tmp_path), "--drop-refused")
+    assert res.exit_code == 0, res.output
+    assert "dropped by canopy-web: skills/turn/SKILL.md" in res.output
+
+
+@pytest.mark.parametrize("status,body,expect", [
+    (409, {"title": "taken", "error": "exists"}, "already exists"),
+    (413, {"error": "too_large"}, "drop --with-history"),
+    (422, {"error": "policy", "problems": [{"path": "hooks/x.json", "code": "refused",
+                                            "message": "hooks/ is refused"}]},
+     "hooks/x.json: hooks/ is refused"),
+    (422, {"error": "secret", "detail": "GitHub token in abc:CLAUDE.md"}, "secret in the repo"),
+    (403, {"title": "Forbidden", "detail": "creating an agent requires the editor role"},
+     "editor role"),
+    (422, {"title": "Request validation failed", "errors": [
+        {"type": "extra_forbidden", "loc": ["body", "payload", "files"],
+         "msg": "Extra inputs are not permitted"}]}, "too old"),
+])
+def test_create_agent_stored_from_maps_refusals(stored, tmp_path, status, body, expect):
+    stored(canopy_web.CanopyError(f"POST /api/agents/stored -> {status}: {json.dumps(body)}"))
+    args = ("--drop-refused", "--with-history") if status == 413 else ("--drop-refused",)
+    repo = _repo(tmp_path)
+    if status == 413:
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "main"], check=True)
+        _commit(repo)
+    res = _create_from(repo, *args)
+    assert res.exit_code != 0 and expect in res.output, res.output
+
+
+def test_create_agent_stored_from_an_older_canopy_web_that_ignored_the_files(stored, tmp_path):
+    stored({k: v for k, v in _CREATED.items() if k != "dropped"})
+    res = _create_from(_repo(tmp_path), "--drop-refused")
+    assert res.exit_code != 0 and "too old" in res.output
+
+
+def test_create_agent_from_needs_stored(web, tmp_path):
+    res = CliRunner().invoke(main, ["create-agent", "x-y", "--mandate", "m", "--into",
+                                    str(tmp_path / "x"), "--from", str(tmp_path)])
+    assert res.exit_code != 0 and "go with --stored" in res.output
+    assert not (tmp_path / "x").exists()
+
+
 # ── git: convert --with-history, clone, credential, export ──────────────────────────────
 
 def _commit(repo, msg="c"):
