@@ -42,6 +42,7 @@ class World:
         self.synced = []
         self.sync_result = "re-injected from canopy-web"
         self.sync_error = None
+        self.skipped = []
         self.google = {"repo_error": "", "hosted": "", "gog": True,
                        "install": "brew install gogcli"}
         self.google_result = {"ok": True, "imported": False, "wrote_client": False,
@@ -105,6 +106,7 @@ class World:
             refresh_device=lambda rid: dict(self.device), zk_status=zk_status,
             installed_plugins=lambda: self.installed, known_marketplaces=lambda: self.known,
             install_plugin=install, set_session_agent=set_agent, sync_env=sync,
+            sealed_skipped=lambda slug: list(self.skipped),
             google_check=lambda slug: dict(self.google), google_login=google_login)
 
 
@@ -417,6 +419,27 @@ def test_a_sync_failure_needs_you_with_the_refresh_line(w, tmp_path):
     w.sync_error = CredError("could not open the zero-knowledge answer")
     s = _step(_run(w, tmp_path), "env")
     assert s.status == au.NEEDS and "canopy cred refresh --agent eva" in s.fix
+
+
+def test_a_value_sealed_to_other_devices_is_a_skip_not_needs_you(w, tmp_path):
+    """A value sealed before this device existed is named as a skip with the
+    price of settling it; the person is ready to go and nobody is asked to act."""
+    w.access.update(may_resolve=True)
+    w.skipped = [{"name": "SALESFORCE_LOGIN_PASSWORD",
+                  "why": "SALESFORCE_LOGIN_PASSWORD is sealed to 10 other device(s), not this one — "
+                         "an admin can settle it (`canopy vault zk settle`), which makes it readable "
+                         "by every member of the vault, not just this device"}]
+    rep = _run(w, tmp_path)
+    assert not rep.needs
+    s = _step(rep, "env SALESFORCE_LOGIN_PASSWORD")
+    assert s.status == au.SKIP and "every member" in s.detail
+    assert _step(rep, "env").status == au.DONE
+
+
+def test_the_real_deps_read_the_skips_from_cred_cli(monkeypatch):
+    from orchestrator import cred_cli
+    monkeypatch.setitem(cred_cli._SEALED_SKIPPED, "eva", [{"name": "X", "why": "w"}])
+    assert au.real_deps().sealed_skipped("eva") == [{"name": "X", "why": "w"}]
 
 
 def test_the_real_env_sync_calls_cred_cli_unthrottled(monkeypatch):

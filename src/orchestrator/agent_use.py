@@ -110,6 +110,8 @@ class Deps:
     install_plugin: Callable[[str], tuple]           # plugin -> (ok, last line)
     set_session_agent: Callable[[str, str], bool]
     sync_env: Callable[[str], str]
+    #: slug -> [{name, why}]: the sealed values the last env sync left out on this device.
+    sealed_skipped: Callable[[str], list] = field(default=lambda slug: [])
     #: The GitHub account this computer's `gh` is signed in as, or "".
     github_login: Callable[[], str] = field(default=lambda: "")
     #: slug -> {"repo_error": str, "hosted": str (the hosted-mail note, "" if not),
@@ -523,6 +525,10 @@ def _env_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool) -> No
         return
     changed = what.startswith("re-injected")
     rep.add("env", DONE if changed else OK, f"~/.{slug}/.env from canopy vault ({what})")
+    # A value sealed to other devices before this one existed is left out, not a failure:
+    # most people never use it. Name it and its price; nobody is asked to act for it.
+    for skip in deps.sealed_skipped(slug) or []:
+        rep.add(f"env {skip.get('name')}", SKIP, str(skip.get("why") or "sealed to other devices"))
 
 
 def _google_step(rep: UseReport, slug: str, deps: Deps, *, may_resolve: bool, is_admin: bool,
@@ -624,6 +630,7 @@ def real_deps() -> Deps:
         install_plugin=lambda p: workspace_cli.install_plugins(CATALOG, [p], subprocess.run)[0][1:],
         set_session_agent=local_cli.set_session_agent,
         sync_env=sync_env,
+        sealed_skipped=cred_cli.sealed_skipped,
         github_login=_gh_login,
         google_check=_google_check,
         google_login=_google_login,

@@ -265,7 +265,7 @@ def test_the_cred_path_writes_a_zk_agents_env_like_any_other(server, tmp_path, m
 def test_a_device_without_a_wrap_is_told_to_ask_for_a_grant(server):
     _enable(server)
     server.wraps = [w for w in server.wraps if str(w["target"]) != str(ME)]
-    with pytest.raises(cred_resolve.ZkWrapMissing, match="grant this device"):
+    with pytest.raises(cred_resolve.ZkWrapMissing, match=r"(?s)confirm it with your passkey.*grants this device"):
         cred_resolve.resolve("eva", token="pat", turn_id="")
 
 
@@ -466,6 +466,60 @@ def test_a_custodial_answer_carrying_a_sealed_value_opens_it(server, me):
                                                   [("device", me.jkt, me.public_jwk)])
     body = cred_resolve.resolve("eva", token="pat", turn_id="")
     assert body["values"]["gog-token"] == GMAIL and body["values"]["CHANNEL"] == "eva@example.com"
+
+
+def test_a_value_sealed_to_other_devices_is_skipped_not_a_failed_resolve(server, me):
+    """A new device is not a recipient of a value sealed before it existed.
+    The rest of the agent's values still arrive; the one it cannot open is NAMED, with
+    the price of settling it, never fatal."""
+    _enable(server)
+    server.zk_values["SALESFORCE_LOGIN_PASSWORD"] = _seal_for(
+        server, "SALESFORCE_LOGIN_PASSWORD", "sf-pass",
+        [("device", zk.jkt(DEV9_KEY.public_key()), DEV9_JWK)])
+    body = cred_resolve.resolve("eva", token="pat", turn_id="")
+    assert body["values"]["KINDORA_SERVICE_KEY"] == SECRET
+    assert "SALESFORCE_LOGIN_PASSWORD" not in body["values"]
+    [skip] = body["sealed_skipped"]
+    assert skip["name"] == "SALESFORCE_LOGIN_PASSWORD"
+    assert "sealed to 1 other device(s)" in skip["why"] and "every member" in skip["why"]
+    assert "sf-pass" not in json.dumps(body["sealed_skipped"])
+    note = cred_resolve.shut_vaults_note(body)
+    assert "SALESFORCE_LOGIN_PASSWORD" in note and "every member" in note
+    with pytest.raises(cred_resolve.ZkUnlockError, match="SALESFORCE_LOGIN_PASSWORD"):
+        cred_resolve.require_opened(body, "SALESFORCE_LOGIN_PASSWORD")
+    cred_resolve.require_opened(body, "KINDORA_SERVICE_KEY")            # opened: no raise
+
+
+def test_a_value_sealed_to_this_device_but_tampered_still_refuses(server, me):
+    """Skipping is only for 'not a recipient'. An entry FOR this device that does not open
+    is tampering or a wrong key, and must never pass quietly."""
+    _enable(server)
+    good = zk.parse_sealed(_seal_for(server, "gog-token", GMAIL, [("device", me.jkt, me.public_jwk)]))
+    other = zk.parse_sealed(_seal_for(server, "gog-token", GMAIL,
+                                      [("device", zk.jkt(DEV9_KEY.public_key()), DEV9_JWK)]))
+    forged = dict(good, r=[dict(other["r"][0], target=me.jkt)])
+    server.zk_values["gog-token"] = "zks1:" + zk.b64u(json.dumps(forged).encode())
+    with pytest.raises(cred_resolve.ZkUnlockError, match="could not open the sealed value"):
+        cred_resolve.resolve("eva", token="pat", turn_id="")
+
+
+def test_env_sync_writes_everything_else_and_names_the_skipped_value(server, me, tmp_path, monkeypatch):
+    from orchestrator import cred_cli
+    _enable(server)
+    server.zk_values["SALESFORCE_LOGIN_PASSWORD"] = _seal_for(
+        server, "SALESFORCE_LOGIN_PASSWORD", "sf-pass",
+        [("device", zk.jkt(DEV9_KEY.public_key()), DEV9_JWK)])
+    monkeypatch.setattr(cred_cli, "legacy_env_path", lambda slug: tmp_path / ".env")
+    monkeypatch.setattr(cred_cli, "stamp_path", lambda slug: tmp_path / "stamp.json")
+    monkeypatch.setattr(cred_cli, "turn_env_file", lambda slug: None)
+    monkeypatch.setattr(cred_cli, "fetch_access", lambda slug, **k: {"may_resolve": True})
+    monkeypatch.setattr(cred_cli, "_human_token", lambda: "pat")
+    what = cred_cli.sync_env("eva", ttl=0)
+    assert what.startswith("re-injected from canopy-web")
+    assert "left out 1 value(s) sealed to other devices: SALESFORCE_LOGIN_PASSWORD" in what
+    env = (tmp_path / ".env").read_text()
+    assert f"KINDORA_SERVICE_KEY" in env and "SALESFORCE_LOGIN_PASSWORD" not in env
+    assert [s["name"] for s in cred_cli.sealed_skipped("eva")] == ["SALESFORCE_LOGIN_PASSWORD"]
 
 
 def test_raw_resolve_hands_back_the_ciphertext(server):
