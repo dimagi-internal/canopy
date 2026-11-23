@@ -513,6 +513,18 @@ def resolve_token(token: Optional[str], *, agent_strict: bool = False) -> str:
     if agent_pat:
         return agent_pat
     if slug and not allow_operator:
+        from orchestrator import turn_agent_token
+
+        why = turn_agent_token.refusal(slug)
+        if why:
+            # canopy-web refused THIS turn the agent's login on purpose (a confined or
+            # direct turn): it is meant to run without it, so a PAT is not the fix.
+            raise AgentIdentityError(
+                f"this is agent '{slug}'s session, but canopy-web gives this turn no "
+                f"canopy login of {slug}'s: {why}. That is by design — do not set "
+                f"CANOPY_WEB_PAT or borrow another login. Do only what this turn's "
+                f"profile allows without writing to canopy-web as {slug}, and say in "
+                f"the reply what needs a full turn.")
         raise _agent_identity_error(
             slug, f"no PAT of its own resolved (CANOPY_WEB_PAT is unset and "
                   f"~/.{slug}/.env has no CANOPY_WEB_PAT)")

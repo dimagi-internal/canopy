@@ -251,3 +251,32 @@ def test_token_says_why_when_there_is_no_identity(monkeypatch):
     monkeypatch.setattr(cw, "resolve_token", refuse)
     r = _token_cli("--slug", "ada")
     assert r.exit_code != 0 and "no PAT of its own" in r.output
+
+
+def test_a_confined_refusal_is_explained_not_answered_with_set_a_pat(box, monkeypatch, tmp_path):
+    """canopy-web's 409 names why (a confined turn): the identity error carries that
+    reason and does not tell the agent to set CANOPY_WEB_PAT."""
+    serve, _ = box
+    monkeypatch.setenv("CANOPY_AGENT", "hal")
+    monkeypatch.setattr(cw, "TOKEN_FILE", tmp_path / "no-workbench-token")
+    monkeypatch.setattr(cw, "_slug_env_pat", lambda slug: "")
+    monkeypatch.setattr(cw, "_agent_env_pat", lambda: "")
+    serve(409, {"title": "No agent login for this turn",
+                "detail": "this turn is confined to read mode, and a confined turn is never "
+                          "given its agent's login"})
+    with pytest.raises(cw.AgentIdentityError) as exc:
+        cw.resolve_token(None)
+    msg = str(exc.value)
+    assert "confined to read mode" in msg and "by design" in msg
+    assert "Set CANOPY_WEB_PAT" not in msg
+
+
+def test_a_plain_404_still_says_set_a_pat(box, monkeypatch, tmp_path):
+    monkeypatch.setenv("CANOPY_AGENT", "hal")
+    monkeypatch.setattr(cw, "TOKEN_FILE", tmp_path / "no-workbench-token")
+    monkeypatch.setattr(cw, "_slug_env_pat", lambda slug: "")
+    monkeypatch.setattr(cw, "_agent_env_pat", lambda: "")
+    with pytest.raises(cw.AgentIdentityError) as exc:
+        cw.resolve_token(None)
+    assert "Set CANOPY_WEB_PAT" in str(exc.value)
+    assert turn_agent_token.refusal("hal") == ""
