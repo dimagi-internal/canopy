@@ -170,6 +170,12 @@ A run that fits none of these (a `person` run with purpose `remember`, a new lea
 end and say that this entry has no lens for it. A refused kind means the learner declares other kinds.
 Use the ones it declares and don't guess.
 
+**The lenses are written here, and only here.** A run never loads its judgment from anywhere else (an agent's
+or a project's review skills included): what a run should look for, emit or leave out is changed in this
+section. A workspace's own review skills (Dimagi's `review-*`) may refine these classes for reviews outside a
+run and for whoever routes a finding, never replace them. A new lens is a new learner plus a row and paragraph
+here (canopy-web `docs/architecture/brain.md`, "Adding a learner"), never a new pipeline.
+
 ### System lens: where canopy's agents and tools fail
 
 The subject is canopy itself: its agents (Ada, Ace, Echo, Eva, Hal and the rest), its CLI and plugin,
