@@ -102,6 +102,26 @@ def resolve(slug: str, *, base_url: Optional[str] = None, transport=None,
         return ""
 
 
+def refusal(slug: str, *, base_url: Optional[str] = None, now=time.time) -> str:
+    """Why canopy-web refused this turn agent ``slug``'s login, when it said so (a 409:
+    a confined or direct turn) and that refusal is still remembered; else "". Reads only
+    the cache `resolve` wrote — never asks. Never raises."""
+    try:
+        from orchestrator import canopy_web, provenance
+
+        turn_id = provenance.resolve_parent().get("turn_id") or ""
+        if not _ID.match(turn_id):
+            return ""
+        doc = json.loads(_cache_path(turn_id).read_text(encoding="utf-8"))
+        if (not isinstance(doc, dict) or doc.get("agent") != slug or doc.get("token")
+                or doc.get("base_url") != canopy_web.resolve_base_url(base_url)
+                or now() >= float(doc.get("refused_until") or 0)):
+            return ""
+        return str(doc.get("why") or "")
+    except Exception:  # noqa: BLE001 — an explanation must never become a new failure
+        return ""
+
+
 def _ask(transport, base: str, runner_id: str, turn_id: str, rtok: str, scope: str):
     from orchestrator import provenance
 
@@ -111,7 +131,9 @@ def _ask(transport, base: str, runner_id: str, turn_id: str, rtok: str, scope: s
         {**provenance.provenance_headers(), "Authorization": f"Bearer {rtok}",
          "Content-Type": "application/json"}, None)
     body = {}
-    if 200 <= status < 300:
+    if 200 <= status < 300 or status == 409:
+        # A 409 is a refusal that says why (a confined or direct turn): its `detail` is
+        # kept so the caller can tell the agent the real reason (`refusal`).
         try:
             body = json.loads(text) if text.strip() else {}
         except ValueError:
@@ -139,16 +161,21 @@ def _resolve(slug: str, *, base_url, transport, now: float, session_only: bool =
     if not rtok:
         return ""  # no approved device key: not remembered, it may be approved soon
     status, body = _ask(transport, base, runner_id, turn_id, rtok, "session")
+    why = str(body.get("detail") or "") if status == 409 else ""
     if not body.get("token") and not session_only and status != 401:
         status, body = _ask(transport, base, runner_id, turn_id, rtok, "turn")
+        why = why or (str(body.get("detail") or "") if status == 409 else "")
     token = str(body.get("token") or "")
     if status == 401:
         runner_session.forget()
     if not token or body.get("agent_slug") != slug:
         # Refused (a finished turn, another box's, a caller's, an older canopy-web) or
         # a login for some other agent: remembered for a while, then asked again.
-        _write_cache(key, {"agent": slug, "base_url": base,
-                           "refused_until": now + REFUSED_TTL, "status": status})
+        doc = {"agent": slug, "base_url": base, "refused_until": now + REFUSED_TTL,
+               "status": status}
+        if why:
+            doc["why"] = why[:500]
+        _write_cache(key, doc)
         return ""
     exp = _expires(body.get("expires_at"))
     if not body.get("session_id"):
