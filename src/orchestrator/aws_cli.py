@@ -297,7 +297,7 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# `canopy aws credentials` — one hour of a NAMED role, with no SSO
+# `canopy aws credentials` — at most an hour of a NAMED role, with no SSO
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # For the AWS CLI's `credential_process`, never for a person or a transcript:
@@ -306,23 +306,26 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 #     credential_process = canopy aws credentials --role labs-read
 #     region = us-east-1
 #
-# Agents get two named roles; people keep the `labs` SSO profile:
+# Agents get named roles; people keep the `labs` SSO profile:
 #
 # * `labs-read` (old name `labs-observe`, still accepted) is connect-labs'
 #   `labs-jj-observe-readonly`: CloudWatch metrics, alarms, resource and RDS
 #   metadata, with explicit denies on log events, object bodies, secrets, task
-#   commands/env and database content.
-# * `labs-readwrite` is `labs-jj-agent-readwrite`: labs-read's reads plus
-#   snapshot/restore/modify/delete of agent-named RDS copies (labs-jj-agent-*,
-#   labs-jj-pg-rehearsal*) and one psql client task; production is source-only and
-#   IAM/Organizations changes are denied. canopy-web vends it to listed agents only.
+#   commands/env and database content. Any agent gets it on ask.
+# * `labs-readwrite` (`labs-jj-agent-readwrite`: agent-named RDS copies and one psql
+#   client task) and `labs-config` (`labs-jj-agent-config`: create and update labs app
+#   secrets, never read one) are FENCED: an agent gets one only while it holds a grant a
+#   person approved. `canopy aws request --role <name> --reason "..."` files the request
+#   and prints the approval page, where an owner of the agent's workspace approves it with
+#   a passkey; `canopy aws requests` lists them. Without a live grant canopy-web answers
+#   403 `approval_required`, and `canopy aws credentials` says how to ask.
 #
 # Two sources, first that answers:
 #
 # 1. a cloud runner's root-owned broker (canopy-web runner/ec2/aws_broker.py,
 #    `/run/canopy-aws/sock`): the instance role assumes the role for this runner's
 #    uid — works even when canopy-web is down. Read-only roles only: the broker
-#    cannot verify which agent is asking, so `labs-readwrite` skips it;
+#    cannot verify which agent is asking, so a fenced role skips it;
 # 2. canopy-web, `POST /api/agents/<slug>/aws-credentials`, as this agent's own
 #    login (canopy-web's task role assumes the role).
 #
@@ -339,11 +342,11 @@ AWS_CREDENTIALS_CACHE = Path.home() / ".canopy" / "aws-credentials"
 CREDENTIALS_MIN_LIFE = 300
 #: The roles a profile can be written for, and the region each lives in.
 KNOWN_ROLES = {"labs-read": "us-east-1", "labs-readwrite": "us-east-1",
-               "labs-observe": "us-east-1"}
+               "labs-config": "us-east-1", "labs-observe": "us-east-1"}
 #: Older names a source may know a role by (same IAM role), tried when it refuses the new one.
 ROLE_FALLBACKS = {"labs-read": ("labs-observe",)}
-#: Roles only canopy-web vends: never asked of a box broker.
-CANOPY_WEB_ONLY = frozenset({"labs-readwrite"})
+#: Fenced roles: only canopy-web vends them, under a person's approval; never asked of a box broker.
+CANOPY_WEB_ONLY = frozenset({"labs-readwrite", "labs-config"})
 _PROCESS_KEYS = ("Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration")
 
 
@@ -400,6 +403,10 @@ def from_canopy_web(role: str, agent: str, call: Callable = canopy_web.call) -> 
     try:
         return call("POST", f"/api/agents/{agent}/aws-credentials", {"role": role})
     except canopy_web.CanopyError as exc:
+        if "approval_required" in str(exc):
+            raise click.ClickException(
+                f"AWS role {role} needs a person's approval for {agent}, and it holds no live grant. "
+                f'Ask: canopy aws request --role {role} --reason "<why, now>"')
         raise click.ClickException(f"canopy-web refused AWS role {role} for {agent}: {exc}")
 
 
@@ -446,14 +453,14 @@ def aws_credentials(role: str, agent: str, *, socket_path: Optional[str] = None,
 
 
 @aws_group.command("credentials")
-@click.option("--role", required=True, help="The named role: labs-read or labs-readwrite.")
+@click.option("--role", required=True, help="The named role: labs-read, or a fenced one (labs-readwrite, labs-config).")
 @click.option("--agent", default="", help="Which agent is asking. Default: this session's agent.")
 def credentials_cmd(role: str, agent: str):
     """credential_process JSON for a named role (for the AWS CLI, not people).
 
-    Put it in a profile with `canopy aws profile --role labs-read` (or
-    labs-readwrite), then use `aws ... --profile labs-read`. Run directly, it prints
-    live AWS keys."""
+    Put it in a profile with `canopy aws profile --role labs-read` (or a fenced role,
+    once a person approved `canopy aws request`), then use `aws ... --profile labs-read`.
+    Run directly, it prints live AWS keys."""
     agent = agent or canopy_web.agent_context_slug()
     click.echo(json.dumps(aws_credentials(role, agent)))
 
@@ -489,3 +496,69 @@ def profile_cmd(role: str):
     wrote = write_profile(role)
     click.echo(f"aws/{role}: {'added' if wrote else 'already in'} ~/.aws/config — "
                f"use `aws ... --profile {role}`")
+
+
+def request_role(role: str, reason: str, minutes: int, agent: str, call: Optional[Callable] = None) -> dict:
+    """File a request for a fenced role (`POST /api/agents/<slug>/aws-role-requests`); the request's card."""
+    call = call or canopy_web.call
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise click.UsageError("--reason must say why the agent needs the role now; the approver reads it.")
+    if not agent:
+        raise click.ClickException("no agent: run inside an agent's session, or pass --agent <slug>")
+    try:
+        return call("POST", f"/api/agents/{agent}/aws-role-requests",
+                    {"role": role, "reason": reason, "minutes": minutes})
+    except canopy_web.CanopyError as exc:
+        raise click.ClickException(f"canopy-web refused the request for AWS role {role} for {agent}: {exc}")
+
+
+def describe_request(card: dict) -> str:
+    """One line for a request: id, role, status, duration, and the approval page or the grant's end."""
+    status = card.get("status", "")
+    line = f"#{card.get('id')} {card.get('role')} {status} ({card.get('minutes')} min)"
+    if status == "pending" and card.get("approval_url"):
+        line += f" — approve: {card['approval_url']}"
+    elif status == "approved" and card.get("expires_at"):
+        line += f" — until {card['expires_at']} (approved by {card.get('approved_by') or '?'})"
+    reason = card.get("reason") or ""
+    return line + (f" — {reason}" if reason else "")
+
+
+@aws_group.command("request")
+@click.option("--role", required=True, help="The fenced role to ask for, e.g. labs-readwrite or labs-config.")
+@click.option("--reason", required=True, help="Why the agent needs it now, in one specific line. The approver reads it.")
+@click.option("--minutes", default=60, show_default=True, type=click.IntRange(15, 480),
+              help="How long the grant lasts once approved.")
+@click.option("--agent", default="", help="Which agent is asking. Default: this session's agent.")
+def request_cmd(role: str, reason: str, minutes: int, agent: str):
+    """Ask a person to let this agent take a fenced AWS role; prints the approval page."""
+    agent = agent or canopy_web.agent_context_slug()
+    card = request_role(role, reason, minutes, agent)
+    click.echo(f"aws/{role}: requested for {agent} (#{card.get('id')}, {card.get('status')}), {card.get('minutes')} minutes once approved. "
+               f"An owner of {agent}'s workspace approves it with a passkey at:\n  {card.get('approval_url', '')}\n"
+               f"Then: canopy aws credentials --role {role} (or a profile from `canopy aws profile --role {role}`).")
+
+
+@aws_group.command("requests")
+@click.option("--role", default="", help="Only this role.")
+@click.option("--agent", default="", help="Which agent. Default: this session's agent.")
+@click.option("--json", "as_json", is_flag=True, help="Print the requests as JSON.")
+def requests_cmd(role: str, agent: str, as_json: bool):
+    """This agent's AWS role requests and grants, newest first."""
+    agent = agent or canopy_web.agent_context_slug()
+    if not agent:
+        raise click.ClickException("no agent: run inside an agent's session, or pass --agent <slug>")
+    path = f"/api/agents/{agent}/aws-role-requests" + (f"?role={role}" if role else "")
+    try:
+        rows = canopy_web.call("GET", path)
+    except canopy_web.CanopyError as exc:
+        raise click.ClickException(f"canopy-web refused {agent}'s AWS role requests: {exc}")
+    if as_json:
+        click.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        click.echo(f"{agent}: no AWS role requests")
+        return
+    for card in rows:
+        click.echo(describe_request(card))

@@ -177,8 +177,76 @@ def test_a_refusal_of_every_name_reports_the_new_one(tmp_path):
                                 cache_dir=tmp_path, call=refuse)
 
 
-@pytest.mark.parametrize("role", ["labs-read", "labs-readwrite", "labs-observe"])
+@pytest.mark.parametrize("role", ["labs-read", "labs-readwrite", "labs-config", "labs-observe"])
 def test_profiles_for_both_roles_and_the_old_name(tmp_path, role):
     cfg = tmp_path / "config"
     assert aws_cli.write_profile(role, cfg) is True
     assert f"credential_process = canopy aws credentials --role {role}\nregion = us-east-1" in cfg.read_text()
+
+
+def test_labs_config_never_asks_the_box_broker(tmp_path):
+    path, seen = _broker(GOOD)
+    calls = []
+    aws_cli.aws_credentials("labs-config", "ace", socket_path=path, cache_dir=tmp_path,
+                            call=lambda *a: calls.append(a) or GOOD)
+    assert calls == [("POST", "/api/agents/ace/aws-credentials", {"role": "labs-config"})]
+    assert "req" not in seen
+
+
+def test_approval_required_says_how_to_ask(tmp_path):
+    def refuse(method, path, body):
+        raise aws_cli.canopy_web.CanopyError(
+            'POST /api/agents/hal/aws-credentials -> 403: {"error": "approval_required", '
+            '"request_with": "POST /api/agents/hal/aws-role-requests"}')
+
+    with pytest.raises(click.ClickException) as exc:
+        aws_cli.aws_credentials("labs-readwrite", "hal", socket_path=str(tmp_path / "none"),
+                                cache_dir=tmp_path, call=refuse)
+    msg = exc.value.message
+    assert "\n" not in msg
+    assert 'canopy aws request --role labs-readwrite --reason' in msg
+
+
+CARD = {"id": 7, "agent": "hal", "role": "labs-readwrite", "reason": "restore a rehearsal copy", "minutes": 90,
+        "status": "pending", "approval_id": 41, "approval_url": "https://canopy.dimagi.com/w/dimagi/approvals/41",
+        "created_at": "2026-11-23T01:00:00Z"}
+
+
+def test_request_posts_the_role_reason_and_minutes():
+    calls = []
+    card = aws_cli.request_role("labs-readwrite", "  restore a\nrehearsal copy ", 90, "hal",
+                                call=lambda *a: calls.append(a) or CARD)
+    assert calls == [("POST", "/api/agents/hal/aws-role-requests",
+                      {"role": "labs-readwrite", "reason": "restore a rehearsal copy", "minutes": 90})]
+    assert card["approval_url"].endswith("/approvals/41")
+    with pytest.raises(click.UsageError):
+        aws_cli.request_role("labs-readwrite", "   ", 60, "hal", call=_no_call)
+    with pytest.raises(click.ClickException, match="no agent"):
+        aws_cli.request_role("labs-readwrite", "why", 60, "", call=_no_call)
+
+
+def test_request_command_prints_the_approval_page(monkeypatch):
+    from click.testing import CliRunner
+
+    monkeypatch.setattr(aws_cli.canopy_web, "call", lambda *a, **k: CARD)
+    r = CliRunner().invoke(aws_cli.aws_group, ["request", "--role", "labs-readwrite", "--reason", "restore",
+                                               "--minutes", "90", "--agent", "hal"])
+    assert r.exit_code == 0, r.output
+    assert "https://canopy.dimagi.com/w/dimagi/approvals/41" in r.output
+    r = CliRunner().invoke(aws_cli.aws_group, ["request", "--role", "labs-readwrite", "--reason", "x",
+                                               "--minutes", "481", "--agent", "hal"])
+    assert r.exit_code != 0
+
+
+def test_requests_command_lists_pending_and_live_grants(monkeypatch):
+    from click.testing import CliRunner
+
+    live = dict(CARD, id=6, status="approved", expires_at="2026-11-23T03:00:00Z", approved_by="jj@dimagi.com")
+    seen = []
+    monkeypatch.setattr(aws_cli.canopy_web, "call", lambda m, p, *a, **k: seen.append((m, p)) or [CARD, live])
+    r = CliRunner().invoke(aws_cli.aws_group, ["requests", "--agent", "hal", "--role", "labs-readwrite"])
+    assert r.exit_code == 0, r.output
+    assert seen == [("GET", "/api/agents/hal/aws-role-requests?role=labs-readwrite")]
+    lines = r.output.strip().splitlines()
+    assert lines[0].startswith("#7 labs-readwrite pending") and "approvals/41" in lines[0]
+    assert lines[1].startswith("#6 labs-readwrite approved") and "until 2026-11-23T03:00:00Z" in lines[1]

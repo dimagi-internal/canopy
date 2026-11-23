@@ -86,6 +86,11 @@
     "operationId": "schedule_week"
    }
   },
+  "/api/agents/stored": {
+   "post": {
+    "operationId": "create_stored_agent"
+   }
+  },
   "/api/agents/{slug}/": {
    "delete": {
     "operationId": "delete_agent"
@@ -169,9 +174,33 @@
     "operationId": "agent_aws_credentials"
    }
   },
+  "/api/agents/{slug}/aws-role-requests": {
+   "get": {
+    "operationId": "list_aws_role_requests"
+   },
+   "post": {
+    "operationId": "request_aws_role"
+   }
+  },
+  "/api/agents/{slug}/aws-role-requests/{request_id}": {
+   "delete": {
+    "operationId": "revoke_aws_role_request"
+   }
+  },
   "/api/agents/{slug}/bootstrap-report": {
    "post": {
     "operationId": "post_bootstrap_report"
+   }
+  },
+  "/api/agents/{slug}/browser-sign-in": {
+   "delete": {
+    "operationId": "switch_off_browser_sign_in"
+   },
+   "get": {
+    "operationId": "get_browser_sign_in"
+   },
+   "put": {
+    "operationId": "switch_on_browser_sign_in"
    }
   },
   "/api/agents/{slug}/canopy-login": {
@@ -278,6 +307,71 @@
   "/api/agents/{slug}/default-order": {
    "get": {
     "operationId": "get_agent_default_order"
+   }
+  },
+  "/api/agents/{slug}/definition": {
+   "get": {
+    "operationId": "get_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/archive": {
+   "get": {
+    "operationId": "get_agent_definition_archive"
+   }
+  },
+  "/api/agents/{slug}/definition/convert": {
+   "post": {
+    "operationId": "convert_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/detach": {
+   "post": {
+    "operationId": "detach_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/drafts": {
+   "post": {
+    "operationId": "draft_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/export": {
+   "post": {
+    "operationId": "export_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions": {
+   "get": {
+    "operationId": "list_agent_definition_revisions"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions/{number}": {
+   "get": {
+    "operationId": "get_agent_definition_revision"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions/{number}/diff": {
+   "get": {
+    "operationId": "diff_agent_definition_revisions"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions/{number}/discard": {
+   "post": {
+    "operationId": "discard_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions/{number}/files/{path}": {
+   "get": {
+    "operationId": "get_agent_definition_file"
+   }
+  },
+  "/api/agents/{slug}/definition/revisions/{number}/publish": {
+   "post": {
+    "operationId": "publish_agent_definition"
+   }
+  },
+  "/api/agents/{slug}/definition/rollback": {
+   "post": {
+    "operationId": "rollback_agent_definition"
    }
   },
   "/api/agents/{slug}/device-keys": {
@@ -913,9 +1007,42 @@
     "operationId": "patch_capability"
    }
   },
+  "/api/brain/consent": {
+   "get": {
+    "operationId": "list_consent"
+   },
+   "post": {
+    "operationId": "opt_people_in"
+   }
+  },
+  "/api/brain/flags/{flag_id}/acknowledge": {
+   "post": {
+    "operationId": "acknowledge_learning_flag"
+   }
+  },
+  "/api/brain/learners/{slug}/": {
+   "patch": {
+    "operationId": "configure_learner"
+   }
+  },
+  "/api/brain/learning-reads": {
+   "put": {
+    "operationId": "set_learning_reads"
+   }
+  },
   "/api/brain/outputs/": {
    "get": {
     "operationId": "list_outputs"
+   }
+  },
+  "/api/brain/outputs/{output_id}/merge": {
+   "post": {
+    "operationId": "merge_outputs"
+   }
+  },
+  "/api/brain/outputs/{output_id}/status": {
+   "post": {
+    "operationId": "set_output_status"
    }
   },
   "/api/brain/run/emit": {
@@ -928,9 +1055,54 @@
     "operationId": "brain_read"
    }
   },
+  "/api/brain/scorecard": {
+   "get": {
+    "operationId": "brain_scorecard"
+   }
+  },
   "/api/brain/sessions/{session_id}/projects/{handle}/": {
    "put": {
     "operationId": "declare_session_project"
+   }
+  },
+  "/api/brain/state": {
+   "get": {
+    "operationId": "brain_state"
+   }
+  },
+  "/api/brain/state/links": {
+   "get": {
+    "operationId": "brain_state_links"
+   }
+  },
+  "/api/brain/state/runs": {
+   "get": {
+    "operationId": "brain_state_runs"
+   }
+  },
+  "/api/brain/targets": {
+   "post": {
+    "operationId": "add_learning_target"
+   }
+  },
+  "/api/brain/targets/{target_id}": {
+   "delete": {
+    "operationId": "remove_learning_target"
+   }
+  },
+  "/api/brain/targets/{target_id}/budget": {
+   "patch": {
+    "operationId": "set_target_budget"
+   }
+  },
+  "/api/brain/targets/{target_id}/runs": {
+   "post": {
+    "operationId": "run_learning_target"
+   }
+  },
+  "/api/brain/why/{session_id}": {
+   "get": {
+    "operationId": "why_not_read"
    }
   },
   "/api/brain/workspaces/{slug}/projects/{handle}/sessions/": {
@@ -949,6 +1121,11 @@
   "/api/brain/workspaces/{slug}/reporting/{person_id}/": {
    "delete": {
     "operationId": "end_reporting"
+   }
+  },
+  "/api/browser/apps": {
+   "get": {
+    "operationId": "list_browser_apps"
    }
   },
   "/api/canopy-sessions/": {
@@ -3287,12 +3464,22 @@
     "operationId": "list_my_host_grants"
    }
   },
+  "/api/me/host-grants/waiting": {
+   "get": {
+    "operationId": "list_my_waiting_host_grants"
+   }
+  },
   "/api/me/host-grants/{grant_id}": {
    "delete": {
     "operationId": "revoke_my_host_grant"
    },
    "get": {
     "operationId": "get_my_host_grant"
+   }
+  },
+  "/api/me/host-grants/{grant_id}/confirm-as-agent": {
+   "post": {
+    "operationId": "confirm_my_host_grant_as_agent"
    }
   },
   "/api/me/host-grants/{grant_id}/confirm/begin": {
@@ -3881,6 +4068,16 @@
     "operationId": "get_site_agents"
    }
   },
+  "/api/sites/contacts": {
+   "post": {
+    "operationId": "update_contacts"
+   }
+  },
+  "/api/sites/contacts/erase": {
+   "post": {
+    "operationId": "erase_contacts"
+   }
+  },
   "/api/sites/resources-updated": {
    "post": {
     "operationId": "resources_updated"
@@ -4312,6 +4509,11 @@
     "operationId": "rotate_walkthrough_token"
    }
   },
+  "/api/workspace-app-bundles/{workspace}/blobs": {
+   "post": {
+    "operationId": "upload_workspace_app_bundle_blobs"
+   }
+  },
   "/api/workspace-app-store/{workspace}/": {
    "get": {
     "operationId": "list_app_store"
@@ -4430,6 +4632,19 @@
     "operationId": "make_workspace_app_link"
    }
   },
+  "/api/workspace-apps/{workspace}/{key}/maintainers": {
+   "get": {
+    "operationId": "list_workspace_app_maintainers"
+   },
+   "post": {
+    "operationId": "set_workspace_app_maintainer"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/maintainers/{grant_id}": {
+   "delete": {
+    "operationId": "remove_workspace_app_maintainer"
+   }
+  },
   "/api/workspace-apps/{workspace}/{key}/query": {
    "get": {
     "operationId": "query_workspace_app"
@@ -4479,6 +4694,9 @@
   "/api/workspace-apps/{workspace}/{key}/versions": {
    "get": {
     "operationId": "list_workspace_app_versions"
+   },
+   "post": {
+    "operationId": "publish_workspace_app_version"
    }
   },
   "/api/workspace-projects/": {
@@ -4763,6 +4981,11 @@
   "/api/workspaces/{slug}/analytics": {
    "get": {
     "operationId": "workspace_analytics"
+   }
+  },
+  "/api/workspaces/{slug}/graph": {
+   "get": {
+    "operationId": "workspace_graph"
    }
   },
   "/api/workspaces/{slug}/health": {
