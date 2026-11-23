@@ -157,7 +157,10 @@ it is fine.
 
 **Expired AWS SSO: fix it yourself.** Run `canopy aws login --profile <p> --reason "<what you need
 AWS for>"` in the background (or with a 10-minute timeout); it pushes a tap-to-approve alert to the
-runner owner and finishes when they approve. Raw `aws sso login` is deny-railed.
+runner owner and finishes when they approve. Raw `aws sso login` is deny-railed. A fenced AWS role
+(`labs-readwrite`, `labs-config`) is never yours standing: `canopy aws request --role <r> --reason "<why,
+now>"` prints an approval page an owner of your workspace approves with a passkey, and `canopy aws
+requests` shows when the grant is live. `labs-read` needs no request.
 
 ## Step 2 — Process inbound, one counterpart at a time
 
