@@ -1,9 +1,8 @@
 """The fleet's inbound-email table: every message lands in exactly one row.
 
 Doc-comment fixtures are synthetic but keep the exact phrasing Google uses (lead line,
-footer), as measured across every Doc-comment message in the fleet mailboxes:
-52 messages → 5 wanted, 20 ignored, 27 unclassified (wake) — until 2026-11-23, when only a
-tag of the agent wakes and the rest are archived.
+footer), as measured across every Doc-comment message in the fleet mailboxes. Only a tag of
+the agent wakes it; every other Docs notification is archived.
 """
 import base64
 import hashlib
@@ -78,8 +77,7 @@ def test_a_human_writing_alarm_shaped_subject_is_a_person():
 
 
 # --- the Docs rows -------------------------------------------------------------------------
-# Only a TAG wakes the agent (Jonathan, 2026-11-23): an @-mention of it, or an action item
-# assigned to it. Every other notification from Google's comment address is archived.
+# Only a TAG wakes the agent: an @-mention of it, or an action item assigned to it. Every other notification from Google's comment address is archived.
 
 @pytest.mark.parametrize("lead,footer", [
     ("Pat Reviewer (pat@example.org) mentioned you in a comment in the following\ndocument",
@@ -109,8 +107,8 @@ def test_an_at_mention_of_the_agent_wakes_even_without_googles_phrasing():
      "@sam@example.org is this still on?\n_Assigned to Sam Other_", SUBSCRIBED),
     ("Pat Reviewer added a comment to the following document",
      "@sam@example.org @kim@example.org could you send this to your contact?", SUBSCRIBED),
-    # The owner's default subscription on the agent's own Doc, tagging nobody: eva@
-    # 2026-11-23 ("what does this mean?", "check if eha clinic same as eha?").
+    # The owner's default subscription on the agent's own Doc, tagging nobody (eva@:
+    # "what does this mean?", "check if eha clinic same as eha?").
     ("Pat Reviewer added a comment to the following document", "dont send - she is not in town", SUBSCRIBED),
     ("Pat Reviewer added a suggestion to the following document", "Delete paragraph", SUBSCRIBED),
     ("New activity in the following document", "@sam@example.org resolved\n_Accepted suggestion_", SUBSCRIBED),
@@ -128,7 +126,7 @@ def test_an_unreadable_doc_comment_is_archived_as_a_doc_comment_not_as_no_reply(
 
 
 # --- the Doc a tagged comment is on --------------------------------------------------------
-# The layout of a real notification (eva@ 1a20810ba581b0a9, 2026-11-23), text/plain part.
+# The layout of a real notification (eva@ thread 1a20810ba581b0a9), text/plain part.
 FID = "1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE"
 REAL = (
     "Shayoni Mazumdar added a comment to the following document\r\n"
