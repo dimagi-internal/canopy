@@ -479,12 +479,22 @@ def fetch_canopy_web_values(slug: str, refs: Optional[list] = None) -> dict:
     if not isinstance(values, dict):
         raise CredError(f"canopy-web returned no credential values for '{slug}'")
     _SHUT_NOTE[slug] = cred_resolve.shut_vaults_note(body)
+    _SEALED_SKIPPED[slug] = [s for s in body.get("sealed_skipped") or [] if isinstance(s, dict)]
     return values
 
 
 #: Per agent, the last resolve's note on vaults this device could not open
 #: (`cred_resolve.shut_vaults_note`), so a "has no X" error says why and who fixes it.
 _SHUT_NOTE: dict = {}
+#: Per agent, the last resolve's sealed values left out on this device
+#: (`cred_resolve.open_zk`'s ``sealed_skipped``: ``[{name, why}]``).
+_SEALED_SKIPPED: dict = {}
+
+
+def sealed_skipped(slug: str) -> list:
+    """The sealed (zks1) values the last resolve of ``slug`` left out on this device,
+    ``[{name, why}]`` — sealed to other devices before this one, never a value."""
+    return list(_SEALED_SKIPPED.get(slug) or [])
 
 
 def env_values(values: dict) -> tuple[dict, list]:
@@ -713,12 +723,15 @@ def sync_env(slug: str, *, ttl: float = SYNC_TTL, now: Optional[float] = None) -
         record()
         raise
     fingerprint = values_fingerprint(values)
+    left_out = sealed_skipped(slug)
+    note = (f"; left out {len(left_out)} value(s) sealed to other devices: "
+            + ", ".join(str(s.get("name")) for s in left_out)) if left_out else ""
     if out.is_file() and fingerprint == prior.get("fingerprint"):
         record()
-        return "unchanged"
+        return "unchanged" + note
     write_env_from_values(slug, out, values)
     record(fingerprint=fingerprint, injected_at=now)
-    return "re-injected from canopy-web"
+    return "re-injected from canopy-web" + note
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -956,8 +969,10 @@ def stage_delegated_google_token(slug: str, account: str, *, token: Optional[str
     raw = (layered.get("values") or {}).get(DELEGATED_GOOGLE_CLIENT_ITEM)
     if zk.is_zk_value(raw) or zk.is_sealed_value(raw):
         try:
-            raw = (cred_resolve.open_zk(slug, {**body, "vaults": [], "delegated": None}, agent_id=agent_id,
-                                        ecdh=ecdh).get("values") or {}).get(DELEGATED_GOOGLE_CLIENT_ITEM)
+            own = cred_resolve.open_zk(slug, {**body, "vaults": [], "delegated": None}, agent_id=agent_id,
+                                       ecdh=ecdh)
+            cred_resolve.require_opened(own, DELEGATED_GOOGLE_CLIENT_ITEM)
+            raw = (own.get("values") or {}).get(DELEGATED_GOOGLE_CLIENT_ITEM)
         except cred_resolve.ZkUnlockError as e:
             raise CredError(f"could not open the Google OAuth client in '{slug}'s vault: {e}")
     client_id, secret = _client_pair(raw)

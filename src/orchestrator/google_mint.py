@@ -316,6 +316,7 @@ def run(slug: str, work: dict, *, token: Optional[str] = None, base_url: Optiona
             opened = cred_resolve.open_zk(slug, {**body, "vaults": []},
                                           agent_id=str(body.get("agent_id") or work.get("agent_id")),
                                           ecdh=ecdh)
+            cred_resolve.require_opened(opened, item)
             client_raw = (opened.get("values") or {}).get(item)
         wrap, kv = body.get("wrap"), body.get("kv")
         if isinstance(wrap, dict) and kv:

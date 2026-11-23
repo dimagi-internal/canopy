@@ -103,11 +103,16 @@ def _explain_401(slug: str, err: Exception) -> Exception:
         st = device_key.read_status()
         which = (f"device key {str(st.get('jkt'))[:16]}… on runner {st.get('runner') or '?'}"
                  if st.get("jkt") else "this machine's device key")
+        # The machine's OWN person ends this first: as a member of the vault they confirm
+        # it with their passkey and a keeper wraps the key to it. An admin is the fallback,
+        # never the first ask — the owner should not stand in a teammate's onboarding.
         return ZkWrapMissing(
             f"'{slug}' is a zero-knowledge vault and {which} has no wrap of its current vault "
-            f"key — ask an admin of '{slug}' to grant this device ('Grant pending' on the "
-            f"agent's page, or `canopy vault zk grant --agent {slug}` from a machine that "
-            "already has access)")
+            f"key yet — if this is your machine and you are a member of {slug}'s vault, confirm "
+            "it with your passkey in canopy-web (Settings → Device keys → Confirm access) and a "
+            f"keeper grants it within minutes; `canopy agent use {slug}` says who can end the "
+            f"wait. Otherwise an admin of '{slug}' grants this device ('Grant pending' on the "
+            f"agent's page, or `canopy vault zk grant --agent {slug}`)")
     if "-> 401" in text and "device_proof_required" in text:
         st = device_key.read_status()
         if st.get("approve_url") and st.get("status") == "pending":
@@ -302,9 +307,44 @@ def open_sealed_for_device(stored: str, *, agent_id: str, name: str, ecdh=None) 
         z = ecdh.derive(zk.sealed_epk_point(entry))
         return zk.open_sealed_with_z(stored, agent_id, name, "device", ecdh.jkt, z)
     except (zk.ZkError, device_key.DeviceKeyError) as e:
-        raise ZkUnlockError(f"this device could not open the sealed value ({e}) — ask an "
-                            "admin to settle it (`canopy vault zk settle`) or re-grant this "
-                            "device") from None
+        raise ZkUnlockError(f"this device could not open the sealed value ({e}) — "
+                            f"{SETTLE_HINT}") from None
+
+
+#: What fixes a sealed value a device is not a recipient of, with its price: settling
+#: re-encrypts it under the vault key, so EVERY member of the vault can read it after.
+SETTLE_HINT = ("an admin can settle it (`canopy vault zk settle`), which makes it readable "
+               "by every member of the vault, not just this device")
+
+
+def sealed_for_device(stored: str, jkt: str) -> bool:
+    """Is this ``zks1:`` value sealed to the device whose ECDH key is ``jkt``? A
+    malformed value answers True, so opening it raises rather than skips quietly."""
+    from orchestrator import vault_zk as zk
+    try:
+        body = zk.parse_sealed(stored)
+    except zk.ZkError:
+        return True
+    return any(isinstance(e, dict) and e.get("kind") == "device" and str(e.get("target")) == str(jkt)
+               for e in body["r"])
+
+
+def skipped_why(stored: str, name: str) -> str:
+    """Why a sealed value was left out on this device — names it, never carries it."""
+    from orchestrator import vault_zk as zk
+    try:
+        n = len(zk.parse_sealed(stored, name)["r"])
+    except zk.ZkError:
+        n = 0
+    return (f"{name} is sealed to {n} other device(s), not this one — {SETTLE_HINT}")
+
+
+def require_opened(body: dict, name: str) -> None:
+    """Raise ZkUnlockError, saying why, when ``name`` was skipped by :func:`open_zk` (a
+    caller that needs exactly that one value)."""
+    for skip in body.get("sealed_skipped") or []:
+        if isinstance(skip, dict) and skip.get("name") == name:
+            raise ZkUnlockError(f"this device could not open {skip.get('why') or name}")
 
 
 def has_sealed(body) -> bool:
@@ -350,10 +390,14 @@ def shut_vaults_note(body) -> str:
     real one, to print as is."""
     shut = [lay for lay in (body.get("vault_layers") if isinstance(body, dict) else None) or []
             if isinstance(lay, dict) and not lay.get("opened")]
-    if not shut:
+    skipped = [s for s in (body.get("sealed_skipped") if isinstance(body, dict) else None) or []
+               if isinstance(s, dict)]
+    parts = [f"the {lay.get('vault')} vault ({lay.get('fix') or lay.get('why') or NO_COPY_WHY})"
+             for lay in shut]
+    parts += [str(s.get("why") or s.get("name")) for s in skipped]
+    if not parts:
         return ""
-    return " — this device cannot open " + "; ".join(
-        f"the {lay.get('vault')} vault ({lay.get('fix') or lay.get('why') or NO_COPY_WHY})" for lay in shut)
+    return " — this device cannot open " + "; ".join(parts)
 
 
 def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
@@ -401,7 +445,9 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     ``zk1:`` values open under the vault key (unwrapped from this device's wrap);
     ``zks1:`` values — sealed by canopy-web to named devices, before anyone settled them
     under the vault key — open with this device's own ECDH key. A custodial answer that
-    carries a sealed value is opened the same way. Never logs or returns a key."""
+    carries a sealed value is opened the same way. A ``zks1:`` value with no entry for
+    this device is left out of ``values`` and named in ``sealed_skipped`` (``[{name,
+    why}]``), never a failed resolve. Never logs or returns a key."""
     from orchestrator import vault_zk as zk
     kv = body.get("kv")
     wrap = body.get("wrap")
@@ -414,10 +460,14 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     ecdh = _device_ecdh(ecdh)
     vk = (unwrap_device_vk(wrap, agent_id=agent_id, kv=kv, ecdh=ecdh)
           if needs_vk and isinstance(wrap, dict) else None)
-    values = {}
+    values, skipped = {}, []
     for name, stored in raw.items():
         if stored in (None, ""):
             values[name] = stored
+        elif zk.is_sealed_value(stored) and not sealed_for_device(str(stored), ecdh.jkt):
+            # Sealed to a fixed list of devices before this one existed. Leave it out and
+            # say so: one value this device never needed must not cost it every other one.
+            skipped.append({"name": str(name), "why": skipped_why(str(stored), str(name))})
         elif zk.is_sealed_value(stored):
             values[name] = open_sealed_for_device(str(stored), agent_id=agent_id,
                                                   name=str(name), ecdh=ecdh)
@@ -434,6 +484,7 @@ def open_zk(slug: str, body: dict, *, agent_id: str, ecdh=None) -> dict:
     vk = b""  # noqa: F841 — drop our only reference
     out = {k: v for k, v in body.items() if k != "wrap"}
     out["values"] = values
+    out["sealed_skipped"] = skipped
     if isinstance(body.get("delegated"), dict):
         out["delegated"], out["delegated_errors"] = open_delegated(body["delegated"], agent_id=agent_id, ecdh=ecdh)
     return out
