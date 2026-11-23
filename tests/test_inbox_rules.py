@@ -1,8 +1,8 @@
 """The fleet's inbound-email table: every message lands in exactly one row.
 
 Doc-comment fixtures are synthetic but keep the exact phrasing Google uses (lead line,
-footer), as measured across every Doc-comment message in the fleet mailboxes:
-52 messages → 5 wanted, 20 ignored, 27 unclassified (wake).
+footer), as measured across every Doc-comment message in the fleet mailboxes. Only a tag of
+the agent wakes it; every other Docs notification is archived.
 """
 import base64
 import hashlib
@@ -77,16 +77,18 @@ def test_a_human_writing_alarm_shaped_subject_is_a_person():
 
 
 # --- the Docs rows -------------------------------------------------------------------------
+# Only a TAG wakes the agent: an @-mention of it, or an action item assigned to it. Every other notification from Google's comment address is archived.
 
 @pytest.mark.parametrize("lead,footer", [
     ("Pat Reviewer (pat@example.org) mentioned you in a comment in the following\ndocument",
      "You have received this email because you are mentioned in this thread by\nPat Reviewer."),
     ("Pat Reviewer (pat@example.org) assigned you an action item in the following document",
      "You have received this email because you are mentioned in this thread by\nPat Reviewer."),
+    # A later reply in a thread the agent was tagged in: Google still says why.
     ("Pat Reviewer replied to a comment in the following document",
-     "You have received this email because you are a participant in this thread."),
+     "You have received this email because you are mentioned in this thread by\nPat Reviewer."),
 ])
-def test_doc_interactions_addressed_to_the_agent_wake(lead, footer):
+def test_doc_comments_that_tag_the_agent_wake(lead, footer):
     v = R.classify(doc(lead, "Pat Reviewer\n| quoted\nplease update the numbers", footer))
     assert v.row == "wanted/doc-interaction" and v.bucket == "wake"
 
@@ -97,36 +99,75 @@ def test_an_at_mention_of_the_agent_wakes_even_without_googles_phrasing():
     assert row(m) == "wanted/doc-interaction"
 
 
-@pytest.mark.parametrize("lead,content", [
-    ("Pat Reviewer accepted a suggestion in the following document", "Add: “a”\n_Accepted suggestion_"),
-    ("Pat Reviewer resolved a comment in the following document", "tone\n_Marked as resolved_"),
-    ("Pat Reviewer marked an action item as done in the following document", "ship it"),
+@pytest.mark.parametrize("lead,content,footer", [
+    ("Pat Reviewer accepted a suggestion in the following document", "Add: “a”\n_Accepted suggestion_", SUBSCRIBED),
+    ("Pat Reviewer resolved a comment in the following document", "tone\n_Marked as resolved_", SUBSCRIBED),
+    ("Pat Reviewer marked an action item as done in the following document", "ship it", SUBSCRIBED),
     ("Pat Reviewer assigned Sam Other an action item in the following document",
-     "@sam@example.org is this still on?\n_Assigned to Sam Other_"),
+     "@sam@example.org is this still on?\n_Assigned to Sam Other_", SUBSCRIBED),
     ("Pat Reviewer added a comment to the following document",
-     "@sam@example.org @kim@example.org could you send this to your contact?"),
+     "@sam@example.org @kim@example.org could you send this to your contact?", SUBSCRIBED),
+    # The owner's default subscription on the agent's own Doc, tagging nobody (eva@:
+    # "what does this mean?", "check if eha clinic same as eha?").
+    ("Pat Reviewer added a comment to the following document", "dont send - she is not in town", SUBSCRIBED),
+    ("Pat Reviewer added a suggestion to the following document", "Delete paragraph", SUBSCRIBED),
+    ("New activity in the following document", "@sam@example.org resolved\n_Accepted suggestion_", SUBSCRIBED),
+    # A reply to a thread the agent only took part in is not a tag.
+    ("Pat Reviewer replied to a comment in the following document", "I didnt quite get this",
+     "You have received this email because you are a participant in this thread."),
 ])
-def test_doc_events_for_someone_else_are_archived(lead, content):
-    v = R.classify(doc(lead, content, SUBSCRIBED))
+def test_doc_notifications_that_do_not_tag_the_agent_are_archived(lead, content, footer):
+    v = R.classify(doc(lead, content, footer))
     assert v.row == "ignored/doc-comment" and v.label == "ignored/doc-comment"
 
 
-@pytest.mark.parametrize("lead,content", [
-    # Feedback on the agent's own draft, @-ing nobody — measured instances say
-    # "dont send - she is not in seattle" and "this section reads as obviously AI".
-    ("Pat Reviewer added a comment to the following document", "dont send - she is not in town"),
-    ("Pat Reviewer replied to a comment in the following document", "I didnt quite get this"),
-    ("Pat Reviewer added a suggestion to the following document", "Delete paragraph"),
-    ("New activity in the following document", "@sam@example.org resolved\n_Accepted suggestion_"),
+def test_an_unreadable_doc_comment_is_archived_as_a_doc_comment_not_as_no_reply():
+    assert row(msg(frm=DOCS, body="")) == "ignored/doc-comment"
+
+
+# --- the Doc a tagged comment is on --------------------------------------------------------
+# The layout of a real notification (eva@ thread 1a20810ba581b0a9), text/plain part.
+FID = "1QDxfhS_gWTYbu31_vhT6gdFxin1WL3XmX8q_B-_QAhE"
+REAL = (
+    "Shayoni Mazumdar added a comment to the following document\r\n"
+    "GDHF outreach drafts \u2014 Shayoni's 23 Nov list  \r\n"
+    f"(https://docs.google.com/document/d/{FID}/edit?disco=doco.I7zRfRBEMbUpGaSUsMVuLQ&usp=comment_email_document"
+    "&ts=6b041cdb&usp_dm=false&tab=t.plx9zoff0any)  \r\n[Shared externally]\r\n\r\n1 comment\r\n\r\n.\r\n"
+    "Shayoni Mazumdar\r\n| 'talked to jackie most recently';\r\n{content}\r\n\r\nOpen  \r\n"
+    f"(https://docs.google.com/document/d/{FID}/edit?disco=doco.I7zRfRBEMbUpGaSUsMVuLQ&usp=comment_email_discussion"
+    "&ts=6b041cdb&usp_dm=false)\r\n\r\nGoogle LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA\r\n\r\n"
+    "You have received this email because you are subscribed to all discussions  \r\n"
+    "on GDHF outreach drafts \u2014 Shayoni's 23 Nov list  \r\n"
+    f"(https://docs.google.com/document/d/{FID}/edit?disco=doco.I7zRfRBEMbUpGaSUsMVuLQ&usp=comment_email_document"
+    "&ts=6b041cdb&usp_dm=false&tab=t.plx9zoff0any).  \r\nChange what Google sends you  \r\n"
+    "(https://docs.google.com/document/u/101388914857441342761/docos/notify?ouid=101388914857441342761"
+    f"&id={FID}&title=GDHF+outreach+drafts&resourcekey).  \r\n"
+    "You can reply to this email to reply to the discussion.")
+REAL_FROM = '"Shayoni Mazumdar (Google Docs)" <comments-noreply@docs.google.com>'
+
+
+def test_the_doc_is_read_off_googles_footer_link():
+    m = msg(frm=REAL_FROM, body=REAL.format(content=f"@{AGENT} what does this mean?"))
+    assert row(m) == "wanted/doc-interaction"
+    assert R.doc_comment_of(m) == {"file_id": FID, "kind": "document",
+                                   "comment_hint": "doco.I7zRfRBEMbUpGaSUsMVuLQ",
+                                   "commenter_name": "Shayoni Mazumdar"}
+
+
+def test_a_link_pasted_into_the_comment_never_names_the_doc():
+    other = "1OTHERotherOTHERotherOTHERotherOTHERother00"
+    pasted = (f"@{AGENT} see https://docs.google.com/document/u/0/docos/notify?id={other} and "
+              f"https://docs.google.com/document/d/{other}/edit?disco=AAAAevil")
+    got = R.doc_comment_of(msg(frm=REAL_FROM, body=REAL.format(content=pasted)))
+    assert got["file_id"] == FID and got["comment_hint"] == "doco.I7zRfRBEMbUpGaSUsMVuLQ"
+
+
+@pytest.mark.parametrize("frm,body", [
+    ("Jane Doe <jane@example.org>", REAL.format(content="hi")),     # not Google's address
+    (REAL_FROM, "Shayoni Mazumdar added a comment\nno footer link"),  # no footer: no Doc
 ])
-def test_doc_comments_that_cannot_be_placed_wake(lead, content):
-    """No positive marker that the comment is for someone else → never archive it."""
-    v = R.classify(doc(lead, content, SUBSCRIBED))
-    assert v.row == "person" and v.bucket == "wake"
-
-
-def test_an_unreadable_doc_comment_wakes_rather_than_hitting_the_no_reply_row():
-    assert row(msg(frm=DOCS, body="")) == "person"
+def test_no_doc_without_googles_address_and_footer(frm, body):
+    assert R.doc_comment_of(msg(frm=frm, body=body)) is None
 
 
 def test_drive_shares_are_archived():
@@ -222,7 +263,7 @@ def test_module_is_stdlib_only_so_the_runner_can_vendor_it():
 #:   1. update this hash;
 #:   2. copy the file into canopy-web at that path and update its pin to the same value;
 #:   3. ship both. Until canopy-web ships, the runner classifies with the old table.
-VENDORED_SHA256 = "69a23cb125fd4b7b882248e40d2ce5d4a0477a72dc8facdb4f94897ff90b8b9a"
+VENDORED_SHA256 = "b62bd1343ed04941edf33dee62acc97efdc93a117bf2aa645577f4e5e03702ce"
 
 
 def test_vendored_copy_pin():

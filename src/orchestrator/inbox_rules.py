@@ -166,27 +166,25 @@ def _cloudwatch_alarm(m: Message) -> str | None:
 #   "... because you are a participant in this thread"    — a reply to the agent's
 #                                                           comment or suggestion
 #   "X mentioned you in a comment" / "X assigned you an action item" / "_Assigned to you_"
-# Those are the wanted markers. The owner's default subscription reads "because you are
-# subscribed to all discussions", and that is NOT a marker either way: on an agent's own
-# draft it carries "dont send - she is not in seattle" and "this section reads as
-# obviously AI" — feedback to the agent with no @ in it. So `ignored/doc-comment` needs
-# its own positive marker that the comment is for somebody else, and a digest ("New
-# activity in the following document", several items at once) is never archived.
+# ONLY A TAG WAKES THE AGENT (Jonathan's rule): an @-mention of it, or an action item
+# assigned to it, in this comment or earlier in its thread. Everything else this address
+# sends is archived by `ignored/doc-comment`: the owner's default subscription ("because
+# you are subscribed to all discussions", which every comment on an agent's own Doc
+# carries), a reply to a thread the agent only took part in, FYI events, digests that do
+# not @ it. The address is Google's machine, never a person writing to the agent, so it
+# is a positive marker in itself; what a person meant for the agent, they tag it in.
+# (Until then the owner's subscription woke a read-mode turn on every comment on an
+# agent's draft: two comments on eva@'s own draft that nobody had tagged Eva in.)
 _DOCS_COMMENTS = "comments-noreply@docs.google.com"
 _ADDRESSED = [
     "you are mentioned in this thread",
-    "you are a participant in this thread",
     " mentioned you in ",
     " assigned you ",
     "_assigned to you_",
-    " replied to your comment",
 ]
 #: Lead-line events that report a change, not a question: nobody is waiting on the agent.
 _DOC_FYI = re.compile(r"\b(?:accepted a suggestion|rejected a suggestion|resolved a comment"
                       r"|marked an action item as done)\b")
-#: An action item handed to a NAMED person — "assigned you" is caught as wanted first.
-_ASSIGNED_OTHER = re.compile(r"\bassigned (?!you\b)[^.\n]{1,80}? an action item\b|_assigned to (?!you_)[^_\n]{1,80}_")
-_MENTION = re.compile(r"@([\w.+-]+@[\w-]+(?:\.[\w-]+)+)")
 
 
 def _doc_lead(m: Message) -> str:
@@ -208,24 +206,44 @@ def _doc_interaction(m: Message) -> str | None:
     return None
 
 
-def _doc_comment_for_someone_else(m: Message) -> str | None:
-    # Only reached when `_doc_interaction` found no addressed marker (rows run in order).
+def _doc_comment_not_tagged(m: Message) -> str | None:
+    # Only reached when `_doc_interaction` found no tag of the agent (rows run in order).
     if m.address != _DOCS_COMMENTS:
         return None
-    lead = _doc_lead(m)
-    if not lead or lead.startswith("new activity"):
-        return None  # a digest, or a body we cannot read: fail open
-    fyi = _DOC_FYI.search(lead)
+    fyi = _DOC_FYI.search(_doc_lead(m))
     if fyi:
         return f'{_DOCS_COMMENTS}, an FYI event: "{fyi.group(0)}"'
-    flat = _flat(m.body)
-    other = _ASSIGNED_OTHER.search(flat)
-    if other:
-        return f'{_DOCS_COMMENTS}, action item for someone else: "{other.group(0)}"'
-    mentioned = sorted({a.lower() for a in _MENTION.findall(m.body or "")})
-    if mentioned and m.mailbox not in mentioned:
-        return f"{_DOCS_COMMENTS}, addressed to {', '.join(mentioned)} and not the agent"
-    return None
+    return f"{_DOCS_COMMENTS}, the agent is not tagged"
+
+
+# ── the Doc a tagged comment is on ────────────────────────────────────────────────────
+# Read off Google's OWN links, never the comment's text: a comment can paste any link,
+# but Google's footer ("Change what Google sends you", a `docos/notify?…&id=<file>` link)
+# comes after everything anyone wrote, so the LAST such link is Google's. The comment's
+# `disco=` id is a hint only: canopy-web binds the turn to the FILE, a thread on the same
+# Doc being the same audience. Measured on eva@ thread 1a20810ba581b0a9.
+_NOTIFY_LINK = re.compile(
+    r"https://docs\.google\.com/(document|spreadsheets|presentation)/(?:u/\d+/)?docos/notify\?[^\s)]*?"
+    r"[?&]id=([A-Za-z0-9_-]{20,128})(?=[&\s)]|$)")
+_DISCO_LINK = re.compile(
+    r"https://docs\.google\.com/(?:document|spreadsheets|presentation)/d/([A-Za-z0-9_-]{20,128})/"
+    r"[^\s)]*?[?&]disco=([A-Za-z0-9_.-]{1,128})")
+_GOOGLE_SUFFIX = re.compile(r"\s*\(Google (?:Docs|Sheets|Slides)\)\s*$")
+
+
+def doc_comment_of(m: Message) -> dict | None:
+    """`{"file_id", "kind", "comment_hint", "commenter_name"}` for a Docs comment notification,
+    or None. `commenter_name` is Google's display name, a label: nobody's identity."""
+    if m.address != _DOCS_COMMENTS:
+        return None
+    links = _NOTIFY_LINK.findall(m.body or "")
+    if not links:
+        return None
+    kind, file_id = links[-1]
+    hints = [cid for fid, cid in _DISCO_LINK.findall(m.body or "") if fid == file_id]
+    name = getaddresses([m.from_])[0][0] if m.from_ else ""
+    return {"file_id": file_id, "kind": kind, "comment_hint": hints[-1] if hints else "",
+            "commenter_name": _GOOGLE_SUFFIX.sub("", name)[:120]}
 
 
 # ── ignored/out-of-office ──────────────────────────────────────────────────────────────
@@ -338,8 +356,8 @@ _NOREPLY_WORD = re.compile(
 
 def _no_reply(m: Message) -> str | None:
     addr = m.address
-    # A Doc comment neither Docs row could place is unclassified, and unclassified wakes:
-    # never let the no-reply word in its address archive it by the back door.
+    # The Docs rows place every Doc comment above this one; never let the no-reply word in
+    # its address decide it by the back door.
     if not addr or addr == _DOCS_COMMENTS:
         return None
     return addr if _NOREPLY_WORD.search(addr) else None
@@ -363,7 +381,7 @@ TABLE: tuple = (
     Row("wanted/cloudwatch-alarm", WAKE,
         "a CloudWatch ALARM:/OK: notification from SNS", _cloudwatch_alarm),
     Row("wanted/doc-interaction", WAKE,
-        "a Google Docs comment, reply or action item addressed to the agent", _doc_interaction),
+        "a Google Docs comment or action item that tags the agent", _doc_interaction),
     Row("ignored/out-of-office", ARCHIVE,
         "an out-of-office / auto-reply", _out_of_office,
         gmail=(_OOO_Q1, _OOO_Q2),
@@ -377,8 +395,8 @@ TABLE: tuple = (
             'OR "away from my email" OR "away from the office")',
         )),
     Row("ignored/doc-comment", ARCHIVE,
-        "a Google Docs event for someone else: an FYI, or a comment @-ing only others",
-        _doc_comment_for_someone_else),
+        "a Google Docs notification that does not tag the agent",
+        _doc_comment_not_tagged),
     Row("ignored/doc-share", ARCHIVE,
         "a Google Drive 'shared with you' notification", _from_any(*_DRIVE_SHARES),
         gmail=("from:(drive-shares-dm-noreply@google.com OR drive-shares-noreply@google.com)",)),
