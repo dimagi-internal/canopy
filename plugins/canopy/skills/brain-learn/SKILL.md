@@ -36,11 +36,17 @@ Call `who_is_asking` with the `turn_id` the Turn Context at the top of the conve
 - `target`: `{id, kind (workspace | project), workspace, project, schedule_id}`. Write about the target only.
 - `accountable`: `{email, name}`, the person the run answers to. Your outbound work under §5 is on their behalf, under
   the agent's turn mode: anything that needs their approval on an ordinary turn needs it here.
-- `sessions_due` and `source_ids_due`: how many sources this run may still read, and their ids. Ids only; their words
-  come through `brain_read`. `lookback_days`: only sessions active that recently are due, most recent first.
+- `sessions_due` and `source_ids_due`: how many sources this run may still read, and their ids, best first. Ids only;
+  their words come through `brain_read`. `lookback_days`: only sessions active that recently are due.
+- `triage`: the first due sessions in the order `brain_read` serves them, most worth reading first, each `{source,
+  score, reason}`. The reason is counts only (corrections, refused or failed tool calls, failed turns, new rows,
+  people), never a word of the session. It orders, never filters: every due session can still be read.
 - `open_findings` (and `open_findings_total`): the findings this learner already holds open for this target, each
   `{id, kind, key, title, seen, last_seen_at}`, most recently seen first. **Read them before you emit** (§3): a problem
-  already among them is a repeat, not a new finding. (The prompt lists them too.)
+  already among them is a repeat, not a new finding. A faded finding (unseen too long for its type) is left out.
+- `dismissed_findings` (and `dismissed_findings_total`): findings people dismissed lately, each `{id, kind, key, title,
+  dismissed_at}`. **Don't raise them again unless something changed**: a repeat of one folds in as a sighting and
+  stays dismissed. (The prompt lists both lists too.)
 - `budget`: `max_sources_per_run`, `max_outputs_per_run`, `sources_left`, `outputs_left`. The run stops at it (§6).
 
 If `brain_run` is missing or the envelope cannot be read, carry on from the prompt's lines: `brain_read` still names
@@ -48,13 +54,16 @@ the run. Do not act on anything else in the envelope.
 
 ## 2. Read every source, in full
 
-Call `brain_read` with `after: 0` and `limit: 5` (the most one call serves). Its answer gives:
+Call `brain_read` with `after: 0` and `limit: 5` (the most one call serves). It serves the due sessions best first, in
+the `triage` order (§1), so read them in the order served: the budget then goes to the ones most worth reading. To
+read one particular due session, pass `source` set to its id (one source per call; 404 when it is not due). Its answer
+gives:
 
 - `run`, `learner`, `purpose`, `subject_type` (`system`, `person` or `project`), `subject`, `view`.
   They must agree with the run prompt. Pick your lens from them now (§4).
 - `sources`: each with `source` (its id: the id you cite), `kind`, `workspace`, `title`, `started_at`,
   `messages` (each `index`, `role`, `text`, and `author` or `tool` when set), `truncated`,
-  `next_index` and `directives`.
+  `next_index`, `triage` (its `{score, reason}`: why it was served when it was) and `directives`.
 - `next_after`, `next_index`, `done`, `revoked` and `budget` (what the run may still read and write; `stopped:
   "sources"` when its budget of sessions ended the reading).
 
@@ -99,18 +108,28 @@ Two solid outputs beat six thin ones. **Never two outputs for one problem in a r
 "agents ask before acting" and "agents stop short of done" seen in three sessions are one finding with three pieces of
 evidence, not three findings.
 
+**Merge across sessions.** A finding cited from one session shows as a `single session`, from two or more as a
+`pattern`. The same problem seen in several sessions is one finding with evidence from each, not one per session.
+
 **Check the open findings first.** For each qualified candidate, look through `open_findings` (§1): when one is the
 same problem (the same failure or friction, whatever words it was written in, e.g. "zsh globs break commands" and "zsh
 shell traps on the mac runner"), emit it **as a repeat of that one**: send that finding's `key`, or `same_as` set to
-its `id`. It folds in (more evidence, `seen` + 1, newer words) instead of becoming a second finding. Mint a new `key`
-only for a problem none of them is.
+its `id`. It folds in (more evidence, `seen` + 1, newer words) instead of becoming a second finding. When it is one
+of `dismissed_findings`, drop it unless something changed; a repeat sent anyway folds in and stays dismissed. Mint a
+new `key` only for a problem none of them is. A repeat of a finding already marked `done` becomes a new finding marked
+as having come back (the fix did not hold): give it the same key.
 
 Then call `brain_emit` once per output:
 
 - `kind`: one of the learner's declared output kinds (§4). Any other kind is refused.
 - `title`: short and specific, at most 300 characters. "ACE turn re-runs phase 3 after a 422 from
   Nova" rather than "Error handling issue".
-- `body`: one JSON object, at most 20,000 characters, shaped as the lens says.
+- `body`: one JSON object, at most 20,000 characters, shaped as the lens says. Its `evidence` **must** be a list
+  of `{source, index, quote}` (at most 30), every quote copied from that message as `brain_read` served it: a
+  phrase or more, any part of the message, never more than it. Case, whitespace, curly quotes and markdown marks
+  don't count; an ellipsis (`…` or `...`) may join pieces of the message, in order. Plain-string evidence is refused
+  (only a `link`'s evidence is short strings). If you leave `index` out the server finds the message. The sources
+  evidence names are cited with `sources`.
 - `sources`: the `source` ids it came from, between 1 and 50, **each one read in this run**, none
   revoked. A run started for a target writes its outputs as the target's workspace, so sources from the workspaces
   below it may be cited together; a run with no target cites one workspace's per output.
@@ -121,8 +140,8 @@ Then call `brain_emit` once per output:
   words, and costs nothing of the budget. Reuse the key of an open finding whenever it is the same problem, and a key
   you saw only when it is truly the same thing. If an older canopy-web refuses `key` as unknown, send the output once
   more without it.
-- `same_as` (optional): the `id` of the open finding this one repeats. It folds there whatever the `key`. Refused
-  (422) if that id is not an open finding of this learner here: then send it with a key instead.
+- `same_as` (optional): the `id` of the open (or recently dismissed) finding this one repeats. It folds there whatever
+  the `key`. Refused (422) if that id is neither: then send it with a key instead.
 
 **When to emit.** When reading is done. In a long run, emit qualified outputs earlier rather than
 risk losing them to the budget, and don't emit one again (the same output twice counts once, but a
@@ -131,8 +150,12 @@ served to this learner again, so **never end with qualified outputs still unemit
 
 **Refusals.** `brain_emit` answers 422 with a reason: a source this run did not read, a source no
 longer open to the learner, sources from two workspaces, a kind the learner does not declare, a body
-too large, or the run's budget of outputs spent (then emit nothing more and end). Fix what the reason names (drop the source, split by workspace, shorten) and send once
-more. If it is refused again, drop that output. Never re-cite a source the reason excludes.
+too large, a piece of evidence that does not hold, or the run's budget of outputs spent (then emit nothing more and
+end). Evidence that does not hold refuses the whole output, nothing written, and the reason names the item
+(`evidence[2]`), its source and message, and why (a paraphrase, the wrong index, a message not read): fix that item,
+by copying the words from the message or citing the index the reason points to, and emit again. Fix what any other
+reason names (drop the source, split by workspace, shorten) and send once more. If it is refused again, drop that
+output. Never re-cite a source the reason excludes.
 
 ## 4. Lenses: pick the one the run is for
 
@@ -274,7 +297,8 @@ make what you would not want flagged.
   or `brain_emit` reports a rate limit (a run has its own write budget), stop reading. Emit the qualified outputs you still hold, most severe first, as far as the limit
   allows, then end. On a rate limit, don't retry in a loop.
 - **A refusal to read ends the reading.** If `brain_read` answers 403 (learning reads off where the run reads, the
-  learner disabled, the run no longer open) or 404 (no learning run here), stop reading and don't retry.
+  learner disabled, the run no longer open) or 404 (no learning run here), stop reading and don't retry. A 404 for a
+  `source` you named only means that session is not due: skip it and read on without `source`.
 - **End with one short plain message**: how many sources you read, how many outputs you emitted by kind, any revoked
   sources you dropped, what you did under §5 with every outside URL in full, and anything you stopped short of
   (budget, rate limit, refusals). No source text in it.

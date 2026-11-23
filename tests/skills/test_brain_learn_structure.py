@@ -116,3 +116,12 @@ def test_checks_the_open_findings_and_reuses_their_keys() -> None:
     for word in ("`open_findings`", "`same_as`", "`lookback_days`", "Check the open findings first",
                  "Never two outputs for one problem"):
         assert word in body, word
+
+
+def test_describes_dismissals_triage_and_grounded_evidence() -> None:
+    """canopy-web remembers dismissals (`dismissed_findings`), serves due sessions best first (`triage`, `source`) and
+    refuses an emit whose evidence is not a verbatim `{source, index, quote}` of a row the run read."""
+    _meta, _front, body = _parts()
+    for word in ("`dismissed_findings`", "`triage`", "pass `source`", "`{source, index, quote}`",
+                 "Plain-string evidence is refused", "`single session`", "`pattern`", "come back"):
+        assert word in body, word
