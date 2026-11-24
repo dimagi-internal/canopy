@@ -255,8 +255,7 @@ def test_requests_command_lists_pending_and_live_grants(monkeypatch):
 @pytest.mark.parametrize("role,hint", [("labs-read", True), ("labs-observe", True),
                                        ("labs-readwrite", True), ("labs-config", False)])
 def test_profile_points_read_roles_at_the_scrubbed_log_groups(tmp_path, monkeypatch, role, hint):
-    """labs-read DOES read logs — the scrubbed /labs-jj/observe/* copies. Say so where the
-    profile is made, so an AccessDenied on raw /ecs/* isn't read as "logs are unreadable"."""
+    """Where the profile is made, say where labs logs live and where to start for slowness."""
     from click.testing import CliRunner
     monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
     out = CliRunner().invoke(aws_cli.profile_cmd, ["--role", role]).output

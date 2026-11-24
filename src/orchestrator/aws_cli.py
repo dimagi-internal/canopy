@@ -309,12 +309,10 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 # Agents get named roles; people keep the `labs` SSO profile:
 #
 # * `labs-read` (old name `labs-observe`, still accepted) is connect-labs'
-#   `labs-jj-observe-readonly`: CloudWatch metrics, alarms, resource and RDS
-#   metadata, and the SCRUBBED log groups `/labs-jj/observe/*` (alb-requests,
-#   request-telemetry, <app>-errors, ecs-events, api-calls), with explicit denies
-#   on RAW log groups (/ecs/*), object bodies, secrets, task commands/env and
-#   database content. Any agent gets it on ask. (A fleet rail in
-#   gating-baseline.json points a raw /ecs/labs-jj-* read at the scrubbed groups.)
+#   `labs-jj-observe-readonly`: AWS ReadOnlyAccess on the labs account (metrics,
+#   raw and scrubbed logs, task definitions, objects, CloudTrail, cost), with
+#   explicit denies on secret values, KMS decrypt, rds-db:connect and ECS exec /
+#   run-task. Any agent gets it on ask.
 # * `labs-readwrite` (`labs-jj-agent-readwrite`: agent-named RDS copies and one psql
 #   client task) and `labs-config` (`labs-jj-agent-config`: create and update labs app
 #   secrets, never read one) are FENCED: an agent gets one only while it holds a grant a
@@ -347,15 +345,14 @@ CREDENTIALS_MIN_LIFE = 300
 KNOWN_ROLES = {"labs-read": "us-east-1", "labs-readwrite": "us-east-1",
                "labs-config": "us-east-1", "labs-observe": "us-east-1"}
 #: Older names a source may know a role by (same IAM role), tried when it refuses the new one.
-#: Roles that read labs logs only through the scrubbed groups (raw /ecs/* is denied).
+#: Roles that can read labs logs; the profile command says where to start.
 READ_LOG_ROLES = frozenset({"labs-read", "labs-observe", "labs-readwrite"})
 LABS_LOGS_HINT = (
-    "Logs: raw /ecs/labs-jj-* groups are denied by design. Read the scrubbed copies:\n"
-    "  /labs-jj/observe/alb-requests       every request: route, status, target_s (start here for slowness)\n"
+    "Logs: raw app logs are /ecs/labs-jj-<app>. For \"what is slow\" start with the\n"
+    "scrubbed per-request group, which has route, status and target_s per request:\n"
+    "  /labs-jj/observe/alb-requests       (filter target_group=\"labs-jj-<app>-tg\")\n"
     "  /labs-jj/observe/request-telemetry  sampled slow requests: duration, cpu, db, outbound ms\n"
     "  /labs-jj/observe/<app>-errors       ERROR/CRITICAL lines (e.g. canopy-web-errors)\n"
-    "  /labs-jj/observe/ecs-events         deploys and task stops\n"
-    "  /labs-jj/observe/api-calls          who called which AWS API\n"
     "e.g. aws logs tail /labs-jj/observe/alb-requests --since 15m --profile {profile}")
 ROLE_FALLBACKS = {"labs-read": ("labs-observe",)}
 #: Fenced roles: only canopy-web vends them, under a person's approval; never asked of a box broker.
