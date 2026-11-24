@@ -1,7 +1,7 @@
 """`canopy aws credentials` / `canopy aws profile`: one hour of a named read-only role.
 
-Pinned: the box's broker wins over canopy-web (it works when canopy-web is down); a
-broker refusal is an error, not a silent fall-through; keys are cached 0600 and reused
+Pinned: canopy-web is the only source (the box broker is retired: it could not tell which
+agent asked, so it could not honour an approval); keys are cached 0600 and reused
 until 5 minutes before expiry; only credential_process keys are printed; the profile is
 added once and an existing one is never edited; and the fleet rail blocks a raw
 `canopy aws credentials` statement (it would print keys into a transcript) while the
@@ -12,10 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import socket
 import stat
-import tempfile
-import threading
 from pathlib import Path
 
 import click
@@ -31,68 +28,35 @@ def _no_call(*a, **k):
     raise AssertionError("canopy-web must not be called")
 
 
-def _broker(reply: dict):
-    d = tempfile.mkdtemp(dir="/tmp")
-    path = os.path.join(d, "s")
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(path)
-    srv.listen(1)
-    seen = {}
-
-    def serve():
-        c, _ = srv.accept()
-        seen["req"] = json.loads(c.makefile().readline())
-        c.sendall((json.dumps(reply) + "\n").encode())
-        c.close()
-        srv.close()
-
-    threading.Thread(target=serve, daemon=True).start()
-    return path, seen
-
-
-def test_the_box_broker_wins_and_only_process_keys_are_kept(tmp_path):
-    path, seen = _broker(GOOD)
-    out = aws_cli.aws_credentials("labs-observe", "hal", socket_path=path, cache_dir=tmp_path, call=_no_call)
-    assert seen["req"] == {"role": "labs-observe", "agent": "hal"}
-    assert set(out) == {"Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
-    cached = tmp_path / "hal--labs-observe.json"
-    assert stat.S_IMODE(cached.stat().st_mode) == 0o600
-
-
-def test_a_broker_refusal_is_an_error_not_a_fall_through(tmp_path):
-    path, _ = _broker({"error": "uid 0 is not a runner"})
-    with pytest.raises(click.ClickException, match="broker refused"):
-        aws_cli.aws_credentials("labs-observe", "hal", socket_path=path, cache_dir=tmp_path, call=_no_call)
-
-
-def test_no_broker_means_canopy_web_as_the_agent(tmp_path):
+def test_canopy_web_as_the_agent_keeps_only_process_keys(tmp_path):
     calls = []
 
     def call(method, path, body):
         calls.append((method, path, body))
         return GOOD
 
-    out = aws_cli.aws_credentials("labs-observe", "hal", socket_path=str(tmp_path / "none"),
+    out = aws_cli.aws_credentials("labs-observe", "hal",
                                   cache_dir=tmp_path, call=call)
     assert calls == [("POST", "/api/agents/hal/aws-credentials", {"role": "labs-observe"})]
-    assert out["SessionToken"] == "t"
+    assert set(out) == {"Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
+    assert stat.S_IMODE((tmp_path / "hal--labs-observe.json").stat().st_mode) == 0o600
 
 
-def test_no_agent_and_no_broker_says_so(tmp_path):
+def test_no_agent_says_so(tmp_path):
     with pytest.raises(click.ClickException, match="no agent"):
-        aws_cli.aws_credentials("labs-observe", "", socket_path=str(tmp_path / "none"),
+        aws_cli.aws_credentials("labs-observe", "",
                                 cache_dir=tmp_path, call=_no_call)
 
 
 def test_cached_keys_are_reused_until_near_expiry(tmp_path):
     (tmp_path / "hal--labs-observe.json").write_text(json.dumps(GOOD))
-    out = aws_cli.aws_credentials("labs-observe", "hal", socket_path=str(tmp_path / "none"),
+    out = aws_cli.aws_credentials("labs-observe", "hal",
                                   cache_dir=tmp_path, call=_no_call)
     assert out["AccessKeyId"] == "ASIA"
     stale = dict(GOOD, Expiration="2000-01-01T00:00:00Z")
     (tmp_path / "hal--labs-observe.json").write_text(json.dumps(stale))
     fresh = dict(GOOD, AccessKeyId="ASIANEW")
-    out = aws_cli.aws_credentials("labs-observe", "hal", socket_path=str(tmp_path / "none"),
+    out = aws_cli.aws_credentials("labs-observe", "hal",
                                   cache_dir=tmp_path, call=lambda *a: fresh)
     assert out["AccessKeyId"] == "ASIANEW"
 
@@ -141,17 +105,6 @@ def test_rail_lets_the_profile_path_and_mentions_pass(cmd):
     assert not blocks(cmd)
 
 
-def test_labs_readwrite_never_asks_the_box_broker(tmp_path):
-    # The broker cannot verify which agent asks, so the write role comes from canopy-web only.
-    path, seen = _broker(GOOD)
-    calls = []
-    out = aws_cli.aws_credentials("labs-readwrite", "hal", socket_path=path, cache_dir=tmp_path,
-                                  call=lambda *a: calls.append(a) or GOOD)
-    assert calls == [("POST", "/api/agents/hal/aws-credentials", {"role": "labs-readwrite"})]
-    assert "req" not in seen
-    assert out["AccessKeyId"] == "ASIA"
-
-
 def test_labs_read_falls_back_to_the_old_name_where_a_source_predates_it(tmp_path):
     asked = []
 
@@ -161,7 +114,7 @@ def test_labs_read_falls_back_to_the_old_name_where_a_source_predates_it(tmp_pat
             raise aws_cli.canopy_web.CanopyError("404 canopy does not vend an AWS role named 'labs-read'")
         return GOOD
 
-    out = aws_cli.aws_credentials("labs-read", "hal", socket_path=str(tmp_path / "none"),
+    out = aws_cli.aws_credentials("labs-read", "hal",
                                   cache_dir=tmp_path, call=old_canopy_web)
     assert asked == ["labs-read", "labs-observe"]
     assert out["AccessKeyId"] == "ASIA"
@@ -173,7 +126,7 @@ def test_a_refusal_of_every_name_reports_the_new_one(tmp_path):
         raise aws_cli.canopy_web.CanopyError(f"403 not for {body['role']}")
 
     with pytest.raises(click.ClickException, match="labs-read for hal"):
-        aws_cli.aws_credentials("labs-read", "hal", socket_path=str(tmp_path / "none"),
+        aws_cli.aws_credentials("labs-read", "hal",
                                 cache_dir=tmp_path, call=refuse)
 
 
@@ -184,15 +137,6 @@ def test_profiles_for_both_roles_and_the_old_name(tmp_path, role):
     assert f"credential_process = canopy aws credentials --role {role}\nregion = us-east-1" in cfg.read_text()
 
 
-def test_labs_config_never_asks_the_box_broker(tmp_path):
-    path, seen = _broker(GOOD)
-    calls = []
-    aws_cli.aws_credentials("labs-config", "ace", socket_path=path, cache_dir=tmp_path,
-                            call=lambda *a: calls.append(a) or GOOD)
-    assert calls == [("POST", "/api/agents/ace/aws-credentials", {"role": "labs-config"})]
-    assert "req" not in seen
-
-
 def test_approval_required_says_how_to_ask(tmp_path):
     def refuse(method, path, body):
         raise aws_cli.canopy_web.CanopyError(
@@ -200,7 +144,7 @@ def test_approval_required_says_how_to_ask(tmp_path):
             '"request_with": "POST /api/agents/hal/aws-role-requests"}')
 
     with pytest.raises(click.ClickException) as exc:
-        aws_cli.aws_credentials("labs-readwrite", "hal", socket_path=str(tmp_path / "none"),
+        aws_cli.aws_credentials("labs-readwrite", "hal",
                                 cache_dir=tmp_path, call=refuse)
     msg = exc.value.message
     assert "\n" not in msg
@@ -252,13 +196,7 @@ def test_requests_command_lists_pending_and_live_grants(monkeypatch):
     assert lines[1].startswith("#6 labs-readwrite approved") and "until 2026-11-23T03:00:00Z" in lines[1]
 
 
-@pytest.mark.parametrize("role,hint", [("labs-read", True), ("labs-observe", True),
-                                       ("labs-readwrite", True), ("labs-config", False)])
-def test_profile_points_read_roles_at_the_scrubbed_log_groups(tmp_path, monkeypatch, role, hint):
-    """labs-read DOES read logs — the scrubbed /labs-jj/observe/* copies. Say so where the
-    profile is made, so an AccessDenied on raw /ecs/* isn't read as "logs are unreadable"."""
-    from click.testing import CliRunner
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-    out = CliRunner().invoke(aws_cli.profile_cmd, ["--role", role]).output
-    assert ("/labs-jj/observe/alb-requests" in out) is hint
-    assert f"--profile {role}" in out
+def test_no_role_asks_a_box_broker():
+    # Retired: the broker could not tell which agent asked, so it could not honour an approval.
+    assert not hasattr(aws_cli, "from_broker")
+    assert "socket_path" not in aws_cli.aws_credentials.__code__.co_varnames
