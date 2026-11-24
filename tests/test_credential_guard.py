@@ -260,6 +260,49 @@ def test_reading_an_email_that_quotes_it_is_not_a_failure():
     assert not g.credential_failure(data)
 
 
+SUBJECT = ("Re: Fwd: Canopy: Needs you \u2014 turns keep failing for budgy, ace on "
+           "cloud-ec2-live: their salesforce login was refused (Error: Not authenticated)")
+
+
+def _gmail_json(depth_one: bool, snippet: str = "") -> str:
+    record = {"subject": SUBJECT, "messageId": "1a20e20aff52e183", "threadId": "1a20e0add04a3cb7",
+              "snippet": snippet}
+    return json.dumps(record if depth_one else {"message": record}, indent=2)
+
+
+def test_an_email_subject_in_gogs_json_is_not_a_failure():
+    command = "gog gmail get 1a20e20aff52e183 --json"
+    ok = _post(tool="Bash", tool_input={"command": command},
+               response={"stdout": _gmail_json(True), "stderr": ""})
+    assert not g.credential_failure(ok)
+    failed = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+              "tool_input": {"command": command}, "error": "Exit code 1\n" + _gmail_json(True)}
+    assert not g.credential_failure(failed)
+
+
+def test_a_long_output_cut_inside_the_indent_is_still_data():
+    # The guard reads the last SHORT_RESULT characters; the cut can land inside a nested
+    # field's indent and leave `  "subject": …` at the start of what it reads.
+    body = _gmail_json(False)
+    tail = len(body) - (body.index('"subject"') - 2)
+    text = "Exit code 1\n" + _gmail_json(False, "y" * (g.SHORT_RESULT - tail))
+    assert text[-g.SHORT_RESULT:].startswith('  "subject"')
+    data = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": {"command": "gog gmail get 1a20e20aff52e183 --json"}, "error": text}
+    assert not g.credential_failure(data)
+
+
+def test_a_json_error_field_from_gog_is_still_a_failure():
+    out = json.dumps({"error": "Not authenticated: run gog login"}, indent=2)
+    ok = _post(tool="Bash", tool_input={"command": "gog gmail search x --json"},
+               response={"stdout": out, "stderr": ""})
+    assert g.credential_failure(ok)
+    failed = {"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+              "tool_input": {"command": "gog gmail search x --json"},
+              "error": "Exit code 1\n" + out}
+    assert g.credential_failure(failed)
+
+
 # ── before a tool ──────────────────────────────────────────────────────────────────────
 
 
