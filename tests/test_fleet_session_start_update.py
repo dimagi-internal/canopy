@@ -822,6 +822,33 @@ def test_refresh_installs_a_dependency_plugin_under_its_own_marketplace(tmp_path
 
 
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_installs_a_plugin_whose_plugin_json_has_no_version(tmp_path, monkeypatch):
+    """chrome-sales keeps its version in marketplace.json; label it by commit, as Claude Code does."""
+    clone, _old, _ = _refresh_box(tmp_path, monkeypatch, name="chrome-sales", mkt="chrome-sales")
+    (clone / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "chrome-sales"}))
+    _git(clone, "commit", "-qam", "no version")
+    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
+    head = _rev(clone)
+
+    result = flu.refresh_plugin("chrome-sales", str(clone))
+
+    assert result["status"] == "updated", result
+    new_cache = flu.PLUGINS_DIR / "cache" / "chrome-sales" / "chrome-sales" / head[:12]
+    assert (new_cache / "skills" / "s.md").read_text() == "new"
+    assert _entry("chrome-sales@chrome-sales")["version"] == head[:12]
+    assert _entry("chrome-sales@chrome-sales")["gitCommitSha"] == head
+
+
+def test_install_version_prefers_plugin_json(tmp_path):
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": "2.0.0"}))
+    assert flu._install_version(tmp_path, "0317005abcdef0123456789") == "2.0.0"
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "x"}))
+    assert flu._install_version(tmp_path, "0317005abcdef0123456789") == "0317005abcde"
+    assert flu._install_version(tmp_path, "") == ""
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_refresh_waits_for_another_update_of_the_same_plugin_then_says_so(tmp_path, monkeypatch):
     pytest.importorskip("fcntl")
     clone, _old, old_sha = _refresh_box(tmp_path, monkeypatch)
