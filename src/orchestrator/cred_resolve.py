@@ -432,7 +432,13 @@ def merge_vault_layers(slug: str, body: dict, *, ecdh=None) -> dict:
             report.append({"vault": name, "opened": False, "why": str(e)[:200]})
             continue
         layered.update(opened)
-        report.append({"vault": name, "opened": True, "names": sorted(opened)})
+        entry = {"vault": name, "opened": True, "names": sorted(opened)}
+        # A value this layer holds that is not `zk1:` (a shared vault serves only those)
+        # is left out — say so by name, or it vanishes with no trace.
+        left_out = sorted(str(n) for n in raw if str(n) not in opened)
+        if left_out:
+            entry["left_out"] = left_out
+        report.append(entry)
     own = body.get("values") if isinstance(body.get("values"), dict) else {}
     out = {k: v for k, v in body.items() if k != "vaults"}
     out["values"] = {**layered, **own}
