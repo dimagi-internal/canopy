@@ -3,9 +3,8 @@
 WHY THIS FILE EXISTS. labs-read (labs-jj-observe-readonly) denies raw app log groups
 (/ecs/labs-jj-*) by design and reads their scrubbed copies under /labs-jj/observe/*.
 An agent that tries the raw group gets a bare AccessDenied and concludes it cannot read
-logs at all (Ada, 2026-11-24: reported canopy-web's logs unreadable while
-/labs-jj/observe/alb-requests held the per-route answer). The rail turns that dead end
-into the scrubbed group, for every agent.
+logs at all, while /labs-jj/observe/alb-requests holds the per-route answer. The rail
+turns that dead end into the scrubbed group, for every agent.
 
 The NEGATIVE half matters most: the scrubbed reads the message recommends, log-group
 metadata, and a grep for the raw path must all pass, or the rail blocks its own remedy.
