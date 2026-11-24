@@ -105,6 +105,10 @@ _ERROR_LINE = re.compile(r"error|fail|refus|denied|exception|traceback", re.IGNO
 #: `bin/ada-…` and printed `git log` would abort the turn on a commit subject such as
 #: "Salesforce 'Not authenticated' = …".
 _QUOTED_LINE = re.compile(r"^(?:    |\t|[+-](?![+-])|>)")
+#: A line that is one field of a JSON record (`  "subject": "…",`): data the command printed,
+#: such as an email's subject quoting "Error: Not authenticated", unless its key is one of the
+#: record's own error fields (ERROR_FIELDS).
+_JSON_FIELD = re.compile(r'^\s*[{\[,]?\s*"([^"\\]{1,80})"\s*:')
 _ABORT_COMMAND = re.compile(r"^\s*(?:\S+/)?canopy\s+turn\s+abort\b")
 #: Tools whose whole job is to report "you need to sign in".
 _AUTH_TOOL = re.compile(r"__(?:complete_)?authenticat", re.IGNORECASE)
@@ -189,6 +193,20 @@ def _answer_text(text: str) -> str:
     return text if isinstance(value, str) else ""
 
 
+def _is_json(text: str) -> bool:
+    try:
+        json.loads(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _data_field(line: str) -> bool:
+    """A JSON field line whose key is not an error field: content, never the tool's error."""
+    m = _JSON_FIELD.match(line)
+    return bool(m) and m.group(1).lower() not in ERROR_FIELDS
+
+
 def credential_failure(data: dict) -> str:
     """The error text when this tool call failed on the agent's credentials, else ""."""
     tool = str(data.get("tool_name") or "")
@@ -213,7 +231,12 @@ def credential_failure(data: dict) -> str:
         if not runs_credentialed(command) or is_abort(command):
             return ""
         tail = text[-SHORT_RESULT:]
-        lines = [line for line in tail.splitlines() if not _QUOTED_LINE.match(line)]
+        if not failed and len(text) <= SHORT_RESULT and _is_json(text):
+            # A whole JSON record (`gog … --json`) answers only in its error fields.
+            answer = _answer_text(text)
+            return tail if match(answer) else ""
+        lines = [line for line in tail.splitlines()
+                 if not _QUOTED_LINE.match(line) and not _data_field(line)]
         if failed:
             return tail if any(match(line) for line in lines) else ""
         # Exit 0 can still be a failure (`canopy email send … 2>&1 | tail -2`): judged only
