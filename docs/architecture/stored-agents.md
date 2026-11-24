@@ -44,20 +44,17 @@ canopy's host, so a redirect elsewhere never carries it. Needs git >= 2.31.
    (or the workspace in a legacy `canopy://` origin). `--runner` reads with the runner's token (`$CANOPY_TOKEN`,
    then this box's runner session); otherwise the person's login (in a turn, the agent's). A 401/403 as a
    person's token on a runner box retries as the box's runner session.
-2. `git init` (a new dest is built in a sibling staging dir and renamed into place), origin = `git_url`,
-   `git fetch --prune --tags origin +refs/heads/main:refs/remotes/origin/main` with the token, `origin/HEAD` →
-   `origin/main`.
-3. `HEAD` → `main`, `git reset --hard origin/main` (or `r<N>`). Tracked files are replaced exactly; tracked files
-   absent from the revision are deleted; untracked and ignored files (`.env`, `node_modules`, state) stay.
-   Nothing in the working tree moves when the fetch fails.
-4. `canopy.slug`, `canopy.revision`, `canopy.root-sha256` are recorded in the repo's git config. It prints one
-   JSON line `{slug, revision, root_sha256, commit, changed}`; `changed: false` when HEAD was already there and
-   nothing tracked was edited. One materialize per dest at a time (`.<slug>.materialize.lock` beside it).
+2. Fetch with the token and `git reset --hard origin/main` (or `r<N>`): tracked files are replaced exactly,
+   untracked and ignored files (`.env`, `node_modules`, state) stay, and nothing in the working tree moves when
+   the fetch fails. The exact steps, the JSON line it prints and its `changed` flag: the module docstring and
+   `canopy agent materialize --help`.
+3. `canopy.slug`, `canopy.revision`, `canopy.root-sha256` are recorded in the repo's git config. One
+   materialize per dest at a time (`.<dest dir name>.materialize.lock` beside it, `src/orchestrator/agent_materialize.py::_DestLock`).
 
-**Migration.** A dir from canopy <= 0.2.897 (origin `canopy://<ws>/<slug>`, one deterministic orphan commit per
-revision) is converted in place by the same steps: origin is set to the git url, fetched, reset. `.env` and
-other untracked files stay; the first sync after the upgrade reports `changed: true` (HEAD moves from the
-orphan commit to the real one), so the fleet updater reinstalls once.
+**A `canopy://` origin.** A dir whose origin is `canopy://<ws>/<slug>` (one orphan commit per revision) is
+converted in place by the same steps: origin is set to the git url, fetched, reset; untracked files stay. Its
+first sync reports `changed: true` (HEAD moves from the orphan commit to the real one), so the fleet updater
+reinstalls once.
 
 **Exported agents.** When canopy-web says `source: repo` (the agent moved to GitHub), a stored dir at the dest is
 repointed: origin becomes `https://github.com/<o>/<n>.git`, the `canopy.*` config goes, and the line says
@@ -67,8 +64,8 @@ at the dest it is an error naming the repo.
 
 `canopy agent sync --slug S [--runner] [--dest D]` is the stored agent's `git pull`: the same thing into
 `$AGENT_ROOT/S` (`--runner`) or `~/.canopy/agents/S`, creating it when missing, refusing a dir that is a GitHub
-clone. Same JSON line, exit 0. (With `--doc-url --title --period-start --period-end` `agent sync` is still the
-manager-sync post.)
+clone. Same JSON line, exit 0. With `--doc-url` it is the manager-sync post instead
+(`canopy agent sync --help`).
 
 A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$CANOPY_WEB_API_URL`, default
 `https://canopy.dimagi.com`), the legacy `canopy://`, or (another canopy-web, e.g. staging) the shape
@@ -95,18 +92,13 @@ A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$C
   is the agent's own, or when the drafting agent does not administer the target. An agent that creates an
   agent (`create-agent --stored`, or registering one) administers it, also after its ownership moves.
   Convert, export and detach stay a person's. canopy-web's rule: its `docs/architecture/stored-agents.md`.
-- `canopy agent definition clone [--slug S] [DIR] [--no-helper]` makes a person's working copy (main, draft, tags)
-  with the token sent on that command only. It sets the clone's `credential.<canopy host>.helper` to
-  `canopy agent definition credential` (hidden; answers git's `get` with the canopy-web login as the Basic
-  password, for canopy's host only), so a later `git pull` works with nothing stored. `--no-helper` leaves the
-  config alone and prints the one-off `git -c credential.<host>.helper=… pull` form instead.
-- `canopy create-agent <slug> --mandate … --stored --workspace <ws>` creates one in canopy-web and writes nothing
-  locally. `--from <dir> [--with-history] [--drop-refused]` creates it WITH a local repo's files in the same
-  `POST /api/agents/stored`: the tracked files `convert` would upload go as `files` (content_b64), laid over the
-  scaffold as revision 1; `--with-history` adds `bundle_b64` (as `convert`); `--drop-refused` leaves out what the
-  local pre-check refuses and sends `drop_refused: true`, and the CLI prints both what it left out and the
-  response's `dropped`. 409 `exists`, 413 `too_large`, 422 `policy`/`secret` and 403 are said as what to do
-  next; a 422 naming `files` as an extra input, or a 201 with no `dropped`, means canopy-web predates `--from`.
+- `canopy agent definition clone` makes a person's working copy (main, draft, tags) with the token sent on that
+  command only. Its credential helper (`canopy agent definition credential`, hidden) answers git's `get` with the
+  canopy-web login, for canopy's host only, so a later `git pull` works with nothing stored (`--help`).
+- `canopy create-agent <slug> --stored` creates one in canopy-web and writes nothing locally; `--from <dir>`
+  lays a local repo's tracked files (the ones `convert` would upload) over the scaffold as revision 1 in the
+  same `POST /api/agents/stored` (flags: `canopy create-agent --help`). Each refusal is said as what to do next
+  (`src/orchestrator/agent_definition_cli.py::stored_create_error`).
 
 ## Moving between canopy and GitHub
 
@@ -115,8 +107,8 @@ A stored dir is recognised by its origin: under `<canopy base>/git/` (base = `$C
   `.claude/settings.json`, `bin/<slug>-email`, `.gitignore`) are not uploaded; refused ones (workflows, scripts,
   `.py` tests) stop it unless `--drop-refused`. `--with-history` adds `bundle_b64` = `git bundle create - main`
   (the repo must have `main`); canopy-web imports it to `refs/heads/imported` and makes revision 1's parent its
-  tip. A body above ~2.4 MB (canopy-web's 2.5 MB request cap) is refused client-side, and a server 413 likewise,
-  both with the files-only hint. `--dry-run` prints the plan (with the bundle's size).
+  tip. A body above `src/orchestrator/agent_definition_cli.py::MAX_CONVERT_BODY` (canopy-web's request cap less
+  slack) is refused client-side, and a server 413 likewise, both with the files-only hint. `--dry-run` prints the plan (with the bundle's size).
 - **Out:** `canopy agent definition export --to-github OWNER/NAME [--ref main]` calls
   `POST /definition/export {repo, ref, github_token}`: canopy-web pushes main + the `r<N>` tags to the EMPTY repo
   with the person's own GitHub token (from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`; used for that one push, never

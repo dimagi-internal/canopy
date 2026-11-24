@@ -25,10 +25,11 @@ Schedules fire from canopy-web, so a schedule does not depend on any one machine
 
 ## What `canopy agent use` does
 
-It checks each step, fixes the ones canopy can, and reports **ok**, **done** or **NEEDS YOU** with the
+It checks each step, fixes the ones canopy can, and reports **ok**, **done**, **skip** or **NEEDS YOU** with the
 exact URL or person. It is safe to re-run until everything is ok. The steps, in order, are listed in the
 module docstring of `src/orchestrator/agent_use.py` (sign-in, device key, vault grant, licence, plugin,
-env, the agent's Google login). Two are worth knowing before you run it:
+env, the agent's Google login). A stored agent (no GitHub repo) is first cloned from canopy-web into
+`~/.canopy/agents/<slug>` and installed from there. Two steps are worth knowing before you run it:
 
 - A licence is requested automatically at your first session; an admin approves it unless the agent's
   caller list already gives you the whole agent.
@@ -48,7 +49,7 @@ ciphertext; values are opened on a device that holds a grant of the agent's vaul
 - **The recovery code** is printed once, when zero-knowledge is turned on. The admin who enabled
   it keeps it offline. It opens the vault if every device and passkey is lost.
 - **A device needs a grant.** A new computer or runner shows as **Grant pending** on the
-  agent's page (`/agents/<slug>`). An admin who holds a grant presses **Give them access** on its
+  agent's page (`/w/<workspace>/agents/<slug>`). An admin who holds a grant presses **Give them access** on its
   Settings → Security tab (or runs
   `canopy vault zk grant --agent <slug>` from a machine that has access).
 - **Changing a value**: the agent's Settings → Security tab, or `canopy vault zk set --agent <slug>
