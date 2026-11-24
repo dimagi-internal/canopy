@@ -23,7 +23,7 @@ a CLI, a plugin, and a website. Here is the whole map:
 |---|---|---|---|
 | **Claude Code** | The agent runtime. Everything else is scaffolding around it. | Your machine | **Yes** |
 | **canopy** (this repo) | The framework: a Claude Code plugin + a `canopy` CLI. Holds the agent factory and the fleet-wide operating model. | Your machine | **Yes** |
-| **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. | Your machine + GitHub | **Yes** |
+| **Your agent's repo** | One git repo per agent — its persona, skills, gating rails, secrets. Generated for you by the factory. A *stored* agent's repo is hosted by canopy-web instead (§4). | Your machine + GitHub (or canopy-web) | **Yes** |
 | **canopy-web** | The shared website: each agent's projects, tasks, turns. Lives at `canopy.dimagi.com`. | Already deployed — you just log in | **Yes** (read/write via CLI) |
 | **A runner** | Runs an agent's turns *on its own*: the runner app on your Mac, or a fleet cloud box. | Your Mac, or a cloud box | **No** |
 
@@ -247,6 +247,11 @@ cd <slug>
 gh repo create dimagi-internal/<slug> --private --source=. --push
 ```
 
+**No GitHub repo?** `canopy create-agent <slug> --mandate "<one-line mission>" --stored --workspace <ws>`
+creates a *stored* agent: canopy-web hosts its definition and writes nothing here. You use it with
+`canopy agent use <slug>` and change it with `canopy agent definition edit` (a draft an admin publishes);
+`--from <dir>` starts it from a local repo's files. How it works: `docs/architecture/stored-agents.md`.
+
 ---
 
 ## 5. Make it real — let `agent doctor` drive
@@ -335,7 +340,7 @@ Schedules fire from canopy-web, so any runner the agent routes to picks them up.
 - **A fleet cloud box** — already running; an admin routes the agent to it.
 
 Either way the runner opens the agent's canopy vault with its own device key, which an admin
-grants once (shown as *Grant pending* on `/agents/<slug>`; **Give them access** on its
+grants once (shown as *Grant pending* on `/w/<workspace>/agents/<slug>`; **Give them access** on its
 Settings → Security tab).
 
 ### Windows

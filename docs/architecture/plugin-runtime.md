@@ -55,7 +55,7 @@ For the same shape per skill, use `canopy skills list --json-output` (each entry
 A stored agent (no GitHub repo; [stored-agents.md](stored-agents.md)) is installed from a dir canopy
 materializes: `~/.canopy/agents/<slug>` on a laptop (`canopy agent use`), `$AGENT_ROOT/<slug>` on a runner.
 That dir is a clone of the agent's git repo hosted by canopy-web (origin `<canopy base>/git/<workspace>/<slug>.git`;
-a dir from before canopy hosted git has origin `canopy://<workspace>/<slug>` and is converted on its next sync),
+a dir whose origin is `canopy://<workspace>/<slug>` is converted on its next sync),
 with HEAD on `origin/main`, so `off_release_branch`, `--refresh` and the version-keyed cache (plugin.json
 `version` = `0.<revision>.0`) work unchanged. The fleet updater never runs a bare `git fetch` on such a dir (it
 would carry no canopy token): it runs `canopy agent sync --slug <slug> --dest <dir>`, which fetches with the
