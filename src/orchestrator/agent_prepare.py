@@ -120,7 +120,12 @@ class RunnerCredentials:
 #: `cred env --runner --print-json` passes through beside `values`. `delegated` is
 #: {name: plaintext} of the credentials people delegated to the agent, opened with this
 #: box's own key (`cred_resolve.open_delegated`) — never written to the agent's env.
-RESOLVE_EXTRAS = ("delegated",)
+#: `vault_layers` (`cred_resolve.merge_vault_layers`) and `sealed_skipped`
+#: (`cred_resolve.open_zk`) are diagnostics, never values: which shared vaults this box
+#: opened or could not (and why), and which sealed values it was not a recipient of. A
+#: runner that never sees them cannot say why a value an attached vault holds did not
+#: reach a turn (a Salesforce login that never got staged looked like "Not authenticated").
+RESOLVE_EXTRAS = ("delegated", "vault_layers", "sealed_skipped")
 
 
 #: What the credentials-only pass (the runner-update timer, every 30 minutes) actually
@@ -204,7 +209,7 @@ def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
         return RunnerCredentials(error=f"could not reach canopy-web for {slug}'s credentials: "
                                        f"{_first_line(str(e), 200)}")
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
-    extras = {k: body[k] for k in RESOLVE_EXTRAS if body.get(k) not in (None, "")}
+    extras = {k: body[k] for k in RESOLVE_EXTRAS if body.get(k) not in (None, "", [], {})}
     definition = body.get("definition") or rt.get("definition") or {}
     return RunnerCredentials(
         values=values, extras=extras,

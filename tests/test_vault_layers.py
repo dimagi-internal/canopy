@@ -82,3 +82,15 @@ def test_without_a_reason_the_fallback_never_offers_zk_keep():
     assert "zk keep" not in out["vault_layers"][0]["why"]
     assert "Machines → Give access" in cred_resolve.shut_vaults_note(out)
     assert cred_resolve.shut_vaults_note({"vault_layers": [{"vault": "Org", "opened": True}]}) == ""
+
+
+def test_a_value_an_opened_layer_cannot_serve_is_named_not_dropped_silently():
+    # A shared vault serves only `zk1:` values; anything else it holds used to vanish with
+    # no trace, so a turn that needed it (Salesforce) failed with nothing to say why.
+    layer = _layer("Salesforce", {"salesforce": "{}"})
+    layer["values"]["legacy"] = "plaintext-or-sealed"
+    out = cred_resolve.merge_vault_layers("ace", {"values": {}, "vaults": [layer]}, ecdh=_ecdh())
+    assert out["values"] == {"salesforce": "{}"}
+    assert out["vault_layers"] == [{"vault": "Salesforce", "opened": True, "names": ["salesforce"],
+                                    "left_out": ["legacy"]}]
+    assert "plaintext-or-sealed" not in repr(out["vault_layers"])

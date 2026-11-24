@@ -628,8 +628,9 @@ def runner_env_bundle(slug: str, *, agent_root: Path, base_url: str = "", token:
                       runner: Runner = subprocess.run) -> tuple[dict, str, dict]:
     """({NAME: value}, backend) as a RUNNER resolves them for one turn — the same
     credentials `canopy agent prepare --runner` uses (canopy-web `/credentials/resolve` with
-    the runner's token), held in memory — plus the resolve's top-level `delegated`,
-    when it returned one (`agent_prepare.RESOLVE_EXTRAS`), from
+    the runner's token), held in memory — plus the resolve's top-level `delegated` and its
+    `vault_layers` / `sealed_skipped` diagnostics, each when it returned one
+    (`agent_prepare.RESOLVE_EXTRAS`), from
     the same resolve call (device proof and zero-knowledge unwrap included)."""
     from orchestrator.agent_prepare import RunnerPreparer
     base = base_url or os.environ.get("CANOPY_BASE_URL", "").strip() or \

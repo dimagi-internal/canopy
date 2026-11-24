@@ -274,6 +274,12 @@ def _resolve_transport(body):
     ({"values": {"CANOPY_WEB_PAT": "w"}, "op_sa_token": "ops_K", "op_vault": "Agent-Ace"}, {}),
     ({"values": {"CANOPY_WEB_PAT": "w"}, "delegated": None}, {}),
     ({"values": {"CANOPY_WEB_PAT": "w"}}, {}),
+    # empty diagnostics are left out, like an empty delegated
+    ({"values": {"CANOPY_WEB_PAT": "w"}, "sealed_skipped": [], "vault_layers": []}, {}),
+    # the diagnostics a runner needs to say why a vault value never reached a turn
+    ({"values": {"CANOPY_WEB_PAT": "w"},
+      "sealed_skipped": [{"name": "X", "why": "sealed to 2 other devices"}]},
+     {"sealed_skipped": [{"name": "X", "why": "sealed to 2 other devices"}]}),
 ])
 def test_print_json_passes_through_only_the_resolves_current_extras(tmp_path, turn_root,
                                                                     monkeypatch, body, want):
