@@ -60,6 +60,8 @@ class UseReport:
     directory: str
     plugin: str = ""
     steps: list[Step] = field(default_factory=list)
+    #: This computer's device key waits for its person's passkey approval at this link.
+    approve_url: str = ""
 
     @property
     def needs(self) -> list[Step]:
@@ -250,6 +252,47 @@ def run(slug: str, directory: str, deps: Deps) -> UseReport:
     return rep
 
 
+#: How long `canopy agent use` waits, by default, for this computer's approval.
+WAIT_FOR_APPROVAL = 600.0
+#: How often it re-reads the device key's status while waiting.
+WAIT_POLL = 5.0
+
+
+def run_and_wait(slug: str, directory: str, deps: Deps, *, wait: float = WAIT_FOR_APPROVAL,
+                 poll: float = WAIT_POLL, say: Callable[[str], None] = print,
+                 sleep: Optional[Callable[[float], None]] = None,
+                 clock: Optional[Callable[[], float]] = None) -> UseReport:
+    """`run`, and when this computer's device key waits for its person's approval, show the
+    link and wait for it (up to ``wait`` seconds), then check everything again — so the
+    first session never starts on a machine that cannot open the agent's secrets. The
+    approval is the person's own passkey; on a vault they hold a copy of, the same touch
+    hands this machine the vault key."""
+    import time
+
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    rep = run(slug, directory, deps)
+    if not rep.approve_url or wait <= 0:
+        return rep
+    say(f"Approve this computer with your passkey: {rep.approve_url}\n"
+        f"Waiting for the approval (up to {int(wait // 60) or 1} min; Ctrl-C to stop and re-run later)…")
+    deadline = clock() + wait
+    while clock() < deadline:
+        sleep(poll)
+        try:
+            st = deps.device_status() or {}
+            runner_id = (st.get("runner") or deps.machine_runner_id()
+                         or str(deps.read_registration().get("runner_id") or ""))
+            st = (deps.refresh_device(runner_id) or st) if runner_id else st
+        except Exception:  # noqa: BLE001 — a blip while waiting: keep waiting
+            continue
+        if st.get("status") == "active" and not st.get("ecdh_waiting"):
+            say("Approved — checking everything again.")
+            return run(slug, directory, deps)
+    say("Not approved yet.")
+    return rep
+
+
 def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, page: str,
                         ask: str, my_id: str, is_admin: bool) -> None:
     zk: Optional[dict] = None
@@ -296,8 +339,9 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
                     device_ok = True
                     rep.add("device key", DONE, f"enrolled ({st.get('kind') or 'key'}, active)")
                 else:
+                    rep.approve_url = st.get("approve_url") or page
                     rep.add("device key", NEEDS, "enrolled; waiting for approval",
-                            f"approve it with your passkey: {st.get('approve_url') or page}")
+                            f"approve it with your passkey: {rep.approve_url}")
             except Exception as e:  # noqa: BLE001
                 rep.add("device key", NEEDS, f"could not enroll ({_first_line(e)})",
                         "`canopy vault device --enroll`")
@@ -314,9 +358,10 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
                     f"({_first_line(e)})", "`canopy vault device --enroll`, then approve it")
         else:
             if st.get("ecdh_jkt"):
+                rep.approve_url = st.get("approve_url") or page
                 rep.add("device key", NEEDS,
                         "added the key a vault grant is sealed to; waiting for approval",
-                        f"approve it with your passkey: {st.get('approve_url') or page}")
+                        f"approve it with your passkey: {rep.approve_url}")
             else:
                 rep.add("device key", NEEDS,
                         f"this computer's key can't receive a vault grant "
@@ -326,8 +371,9 @@ def _canopy_vault_steps(rep: UseReport, slug: str, deps: Deps, access: dict, *, 
         device_ok = True
         rep.add("device key", OK, f"{st.get('kind') or 'key'} {str(st['jkt'])[:12]}…, approved")
     elif st.get("status") == "pending":
+        rep.approve_url = st.get("approve_url") or page
         rep.add("device key", NEEDS, "enrolled; waiting for approval",
-                f"approve it with your passkey: {st.get('approve_url') or page}")
+                f"approve it with your passkey: {rep.approve_url}")
     else:
         rep.add("device key", NEEDS, f"this computer's device key is '{st.get('status')}'",
                 "`canopy vault device --reenroll`, then approve it")

@@ -657,3 +657,48 @@ def test_a_stored_agent_whose_install_fails_names_the_commands(w, tmp_path):
     rep, _, dest = _stored(w, tmp_path, install=(False, "install: boom"))
     p = _step(rep, "plugin")
     assert p.status == au.NEEDS and f"claude plugin marketplace add {dest}" in p.fix
+
+
+# ── waiting for this computer's approval ─────────────────────────────────────
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_use_shows_the_approve_link_waits_and_checks_again_once_approved(w, tmp_path):
+    w.device.update(status="pending", approve_url=f"{BASE}/approve/dk-1")
+    clock, said = _Clock(), []
+
+    def sleep(s):
+        clock.t += s
+        if clock.t >= 10:                      # the person approves on the second look
+            w.device.update(status="active")
+
+    rep = au.run_and_wait("eva", str(tmp_path), w.deps(), wait=60, poll=5, say=said.append,
+                          sleep=sleep, clock=clock)
+    assert f"{BASE}/approve/dk-1" in said[0]
+    assert said[-1].startswith("Approved")
+    assert _step(rep, "device key").status == au.OK and not rep.needs
+
+
+def test_use_stops_waiting_at_the_limit_and_still_says_what_is_left(w, tmp_path):
+    w.device.update(status="pending", approve_url=f"{BASE}/approve/dk-1")
+    clock, said = _Clock(), []
+    rep = au.run_and_wait("eva", str(tmp_path), w.deps(), wait=20, poll=5, say=said.append,
+                          sleep=lambda s: setattr(clock, "t", clock.t + s), clock=clock)
+    assert said[-1] == "Not approved yet."
+    assert _step(rep, "device key").status == au.NEEDS
+    assert rep.approve_url == f"{BASE}/approve/dk-1"
+
+
+def test_use_does_not_wait_when_nothing_waits_for_approval_or_wait_is_zero(w, tmp_path):
+    said = []
+    never = lambda s: (_ for _ in ()).throw(AssertionError("slept"))  # noqa: E731
+    assert not au.run_and_wait("eva", str(tmp_path), w.deps(), say=said.append, sleep=never).needs
+    w.device.update(status="pending", approve_url=f"{BASE}/approve/dk-1")
+    rep = au.run_and_wait("eva", str(tmp_path), w.deps(), wait=0, say=said.append, sleep=never)
+    assert rep.needs and said == []

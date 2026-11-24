@@ -586,7 +586,10 @@ def agent_doctor(repo, slug, all_agents, do_fix, as_json):
 @click.option("--dir", "directory", default=".", type=click.Path(file_okay=False),
               help="The project whose Claude Code sessions use the agent (default: here).")
 @click.option("--json", "as_json", is_flag=True, help="Print the steps as JSON.")
-def agent_use(slug, directory, as_json):
+@click.option("--wait", "wait", type=float, default=None,
+              help="Seconds to wait for this computer's approval (default: 600 at a terminal, "
+                   "0 otherwise or with --json).")
+def agent_use(slug, directory, as_json, wait):
     """Use agent SLUG yourself, in Claude Code on this computer — no runner needed.
 
     \b
@@ -601,11 +604,14 @@ def agent_use(slug, directory, as_json):
     device key, this device's access to the agent's canopy vault, your licence
     to use the agent, the agent's plugin, $CANOPY_AGENT for --dir, and the
     agent's env. Each step says ok / done / NEEDS YOU (with the exact URL or
-    person). It ends with the line to start the agent, or what is left for you.
-    Exits 1 while anything NEEDS YOU."""
+    person). While this computer waits for your passkey approval it shows the link
+    and waits for it (--wait), then checks again. It ends with the line to start
+    the agent, or what is left for you. Exits 1 while anything NEEDS YOU."""
     from orchestrator import agent_use as au
 
-    rep = au.run(slug, directory, au.real_deps())
+    if wait is None:
+        wait = au.WAIT_FOR_APPROVAL if (sys.stdout.isatty() and not as_json) else 0
+    rep = au.run_and_wait(slug, directory, au.real_deps(), wait=wait, say=click.echo)
     click.echo(json.dumps(rep.as_dict(), indent=1) if as_json else rep.render())
     if rep.needs:
         raise SystemExit(1)
