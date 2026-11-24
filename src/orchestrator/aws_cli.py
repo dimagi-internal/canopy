@@ -306,60 +306,39 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 #     credential_process = canopy aws credentials --role labs-read
 #     region = us-east-1
 #
-# Agents get named roles; people keep the `labs` SSO profile:
+# Agents get named roles; people keep the `labs` SSO profile. Every role is FENCED: an
+# agent gets one only while it holds a grant a person approved, unless canopy-web lists it
+# as standing for that role (settings.CANOPY_AWS_ROLE_AGENTS: Ada and Hal for labs-read,
+# for devops). `canopy aws request --role <name> --reason "..."` files the request and
+# prints the approval page, where an owner of the agent's workspace approves it with a
+# passkey; `canopy aws requests` lists them. Without a live grant canopy-web answers 403
+# `approval_required`, and `canopy aws credentials` says how to ask.
 #
 # * `labs-read` (old name `labs-observe`, still accepted) is connect-labs'
-#   `labs-jj-observe-readonly`: CloudWatch metrics, alarms, resource and RDS
-#   metadata, and the SCRUBBED log groups `/labs-jj/observe/*` (alb-requests,
-#   request-telemetry, <app>-errors, ecs-events, api-calls), with explicit denies
-#   on RAW log groups (/ecs/*), object bodies, secrets, task commands/env and
-#   database content. Any agent gets it on ask. (A fleet rail in
-#   gating-baseline.json points a raw /ecs/labs-jj-* read at the scrubbed groups.)
-# * `labs-readwrite` (`labs-jj-agent-readwrite`: agent-named RDS copies and one psql
-#   client task) and `labs-config` (`labs-jj-agent-config`: create and update labs app
-#   secrets, never read one) are FENCED: an agent gets one only while it holds a grant a
-#   person approved. `canopy aws request --role <name> --reason "..."` files the request
-#   and prints the approval page, where an owner of the agent's workspace approves it with
-#   a passkey; `canopy aws requests` lists them. Without a live grant canopy-web answers
-#   403 `approval_required`, and `canopy aws credentials` says how to ask.
+#   `labs-jj-observe-readonly`: AWS ReadOnlyAccess (raw logs, objects, task definitions,
+#   CloudTrail) with denies on secret values, KMS decrypt and exec.
+# * `labs-readwrite` (`labs-jj-agent-readwrite`) is the `labs` SSO profile cleaned up:
+#   AdministratorAccess minus guardrails (no org/SSO/IAM-user changes, no edits to the
+#   access roles, no audit tampering, production DB and backups not deletable).
+# * `labs-config` (`labs-jj-agent-config`): create and update labs app secrets, never read one.
 #
-# Two sources, first that answers:
+# The one source is canopy-web, `POST /api/agents/<slug>/aws-credentials`, as this agent's
+# own login (canopy-web's task role assumes the role). The cloud runners' box broker no
+# longer vends anything: it could not verify which agent was asking, so it could not honour
+# an approval. A source that predates `labs-read` refuses the name; the request is then
+# repeated as `labs-observe` (same IAM role).
 #
-# 1. a cloud runner's root-owned broker (canopy-web runner/ec2/aws_broker.py,
-#    `/run/canopy-aws/sock`): the instance role assumes the role for this runner's
-#    uid — works even when canopy-web is down. Read-only roles only: the broker
-#    cannot verify which agent is asking, so a fenced role skips it;
-# 2. canopy-web, `POST /api/agents/<slug>/aws-credentials`, as this agent's own
-#    login (canopy-web's task role assumes the role).
-#
-# A source that predates `labs-read` refuses the name; the request is then repeated
-# as `labs-observe` (same IAM role), so a new CLI works against an old broker.
-#
-# Either way the session is stamped with the agent, so CloudTrail says who made each
+# The session is stamped with the agent, so CloudTrail says who made each
 # call. Keys are cached (0600) until 5 minutes before they expire, because the AWS CLI
 # runs credential_process on every invocation.
 
-AWS_BROKER_SOCKET_ENV = "CANOPY_AWS_BROKER_SOCKET"
-DEFAULT_AWS_BROKER_SOCKET = "/run/canopy-aws/sock"
 AWS_CREDENTIALS_CACHE = Path.home() / ".canopy" / "aws-credentials"
 CREDENTIALS_MIN_LIFE = 300
 #: The roles a profile can be written for, and the region each lives in.
 KNOWN_ROLES = {"labs-read": "us-east-1", "labs-readwrite": "us-east-1",
                "labs-config": "us-east-1", "labs-observe": "us-east-1"}
 #: Older names a source may know a role by (same IAM role), tried when it refuses the new one.
-#: Roles that read labs logs only through the scrubbed groups (raw /ecs/* is denied).
-READ_LOG_ROLES = frozenset({"labs-read", "labs-observe", "labs-readwrite"})
-LABS_LOGS_HINT = (
-    "Logs: raw /ecs/labs-jj-* groups are denied by design. Read the scrubbed copies:\n"
-    "  /labs-jj/observe/alb-requests       every request: route, status, target_s (start here for slowness)\n"
-    "  /labs-jj/observe/request-telemetry  sampled slow requests: duration, cpu, db, outbound ms\n"
-    "  /labs-jj/observe/<app>-errors       ERROR/CRITICAL lines (e.g. canopy-web-errors)\n"
-    "  /labs-jj/observe/ecs-events         deploys and task stops\n"
-    "  /labs-jj/observe/api-calls          who called which AWS API\n"
-    "e.g. aws logs tail /labs-jj/observe/alb-requests --since 15m --profile {profile}")
 ROLE_FALLBACKS = {"labs-read": ("labs-observe",)}
-#: Fenced roles: only canopy-web vends them, under a person's approval; never asked of a box broker.
-CANOPY_WEB_ONLY = frozenset({"labs-readwrite", "labs-config"})
 _PROCESS_KEYS = ("Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration")
 
 
@@ -380,32 +359,6 @@ def _process_json(doc: dict) -> dict:
     if missing:
         raise click.ClickException(f"the credential source returned no {', '.join(missing)}")
     return out
-
-
-def from_broker(role: str, agent: str, socket_path: str) -> Optional[dict]:
-    """The runner broker's answer, or None when there is no broker here.
-    Raises ClickException when the broker answered with an error."""
-    import socket
-
-    if not os.path.exists(socket_path):
-        return None
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(30)
-    try:
-        s.connect(socket_path)
-        s.sendall((json.dumps({"role": role, "agent": agent or "unknown"}) + "\n").encode())
-        line = s.makefile("rb").readline()
-    except OSError:
-        return None   # a socket nobody serves: fall through to canopy-web
-    finally:
-        s.close()
-    try:
-        doc = json.loads(line or b"{}")
-    except ValueError:
-        raise click.ClickException("the AWS broker answered with something that is not JSON")
-    if doc.get("error"):
-        raise click.ClickException(f"the AWS broker refused: {doc['error']}")
-    return doc
 
 
 def from_canopy_web(role: str, agent: str, call: Callable = canopy_web.call) -> dict:
@@ -436,11 +389,9 @@ def _with_fallbacks(role: str, ask: Callable[[str], Optional[dict]]) -> Optional
         raise first
 
 
-def aws_credentials(role: str, agent: str, *, socket_path: Optional[str] = None,
-                    cache_dir: Optional[Path] = None, now: Optional[float] = None,
-                    call: Callable = canopy_web.call) -> dict:
-    """credential_process JSON for `role` as `agent`: cached, else the box's broker,
-    else canopy-web."""
+def aws_credentials(role: str, agent: str, *, cache_dir: Optional[Path] = None,
+                    now: Optional[float] = None, call: Callable = canopy_web.call) -> dict:
+    """credential_process JSON for `role` as `agent`: cached, else canopy-web."""
     import time
 
     now = time.time() if now is None else now
@@ -452,11 +403,7 @@ def aws_credentials(role: str, agent: str, *, socket_path: Optional[str] = None,
             return _process_json(cached)
     except (OSError, ValueError, click.ClickException):
         pass
-    socket_path = socket_path or os.environ.get(AWS_BROKER_SOCKET_ENV) or DEFAULT_AWS_BROKER_SOCKET
-    doc = None if role in CANOPY_WEB_ONLY else _with_fallbacks(
-        role, lambda name: from_broker(name, agent, socket_path))
-    if doc is None:
-        doc = _with_fallbacks(role, lambda name: from_canopy_web(name, agent, call=call))
+    doc = _with_fallbacks(role, lambda name: from_canopy_web(name, agent, call=call))
     out = _process_json(doc)
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(cached_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -466,13 +413,14 @@ def aws_credentials(role: str, agent: str, *, socket_path: Optional[str] = None,
 
 
 @aws_group.command("credentials")
-@click.option("--role", required=True, help="The named role: labs-read, or a fenced one (labs-readwrite, labs-config).")
+@click.option("--role", required=True, help="The named role: labs-read, labs-readwrite or labs-config.")
 @click.option("--agent", default="", help="Which agent is asking. Default: this session's agent.")
 def credentials_cmd(role: str, agent: str):
     """credential_process JSON for a named role (for the AWS CLI, not people).
 
-    Put it in a profile with `canopy aws profile --role labs-read` (or a fenced role,
-    once a person approved `canopy aws request`), then use `aws ... --profile labs-read`.
+    Put it in a profile with `canopy aws profile --role labs-read`, then use
+    `aws ... --profile labs-read` (once a person approved `canopy aws request`, unless
+    the agent is standing for the role).
     Run directly, it prints live AWS keys."""
     agent = agent or canopy_web.agent_context_slug()
     click.echo(json.dumps(aws_credentials(role, agent)))
@@ -509,8 +457,6 @@ def profile_cmd(role: str):
     wrote = write_profile(role)
     click.echo(f"aws/{role}: {'added' if wrote else 'already in'} ~/.aws/config — "
                f"use `aws ... --profile {role}`")
-    if role in READ_LOG_ROLES:
-        click.echo(LABS_LOGS_HINT.format(profile=role))
 
 
 def request_role(role: str, reason: str, minutes: int, agent: str, call: Optional[Callable] = None) -> dict:
