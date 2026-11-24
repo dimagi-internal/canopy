@@ -250,3 +250,15 @@ def test_requests_command_lists_pending_and_live_grants(monkeypatch):
     lines = r.output.strip().splitlines()
     assert lines[0].startswith("#7 labs-readwrite pending") and "approvals/41" in lines[0]
     assert lines[1].startswith("#6 labs-readwrite approved") and "until 2026-11-23T03:00:00Z" in lines[1]
+
+
+@pytest.mark.parametrize("role,hint", [("labs-read", True), ("labs-observe", True),
+                                       ("labs-readwrite", True), ("labs-config", False)])
+def test_profile_points_read_roles_at_the_scrubbed_log_groups(tmp_path, monkeypatch, role, hint):
+    """labs-read DOES read logs — the scrubbed /labs-jj/observe/* copies. Say so where the
+    profile is made, so an AccessDenied on raw /ecs/* isn't read as "logs are unreadable"."""
+    from click.testing import CliRunner
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    out = CliRunner().invoke(aws_cli.profile_cmd, ["--role", role]).output
+    assert ("/labs-jj/observe/alb-requests" in out) is hint
+    assert f"--profile {role}" in out

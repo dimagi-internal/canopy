@@ -310,8 +310,11 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 #
 # * `labs-read` (old name `labs-observe`, still accepted) is connect-labs'
 #   `labs-jj-observe-readonly`: CloudWatch metrics, alarms, resource and RDS
-#   metadata, with explicit denies on log events, object bodies, secrets, task
-#   commands/env and database content. Any agent gets it on ask.
+#   metadata, and the SCRUBBED log groups `/labs-jj/observe/*` (alb-requests,
+#   request-telemetry, <app>-errors, ecs-events, api-calls), with explicit denies
+#   on RAW log groups (/ecs/*), object bodies, secrets, task commands/env and
+#   database content. Any agent gets it on ask. (A fleet rail in
+#   gating-baseline.json points a raw /ecs/labs-jj-* read at the scrubbed groups.)
 # * `labs-readwrite` (`labs-jj-agent-readwrite`: agent-named RDS copies and one psql
 #   client task) and `labs-config` (`labs-jj-agent-config`: create and update labs app
 #   secrets, never read one) are FENCED: an agent gets one only while it holds a grant a
@@ -344,6 +347,16 @@ CREDENTIALS_MIN_LIFE = 300
 KNOWN_ROLES = {"labs-read": "us-east-1", "labs-readwrite": "us-east-1",
                "labs-config": "us-east-1", "labs-observe": "us-east-1"}
 #: Older names a source may know a role by (same IAM role), tried when it refuses the new one.
+#: Roles that read labs logs only through the scrubbed groups (raw /ecs/* is denied).
+READ_LOG_ROLES = frozenset({"labs-read", "labs-observe", "labs-readwrite"})
+LABS_LOGS_HINT = (
+    "Logs: raw /ecs/labs-jj-* groups are denied by design. Read the scrubbed copies:\n"
+    "  /labs-jj/observe/alb-requests       every request: route, status, target_s (start here for slowness)\n"
+    "  /labs-jj/observe/request-telemetry  sampled slow requests: duration, cpu, db, outbound ms\n"
+    "  /labs-jj/observe/<app>-errors       ERROR/CRITICAL lines (e.g. canopy-web-errors)\n"
+    "  /labs-jj/observe/ecs-events         deploys and task stops\n"
+    "  /labs-jj/observe/api-calls          who called which AWS API\n"
+    "e.g. aws logs tail /labs-jj/observe/alb-requests --since 15m --profile {profile}")
 ROLE_FALLBACKS = {"labs-read": ("labs-observe",)}
 #: Fenced roles: only canopy-web vends them, under a person's approval; never asked of a box broker.
 CANOPY_WEB_ONLY = frozenset({"labs-readwrite", "labs-config"})
@@ -496,6 +509,8 @@ def profile_cmd(role: str):
     wrote = write_profile(role)
     click.echo(f"aws/{role}: {'added' if wrote else 'already in'} ~/.aws/config — "
                f"use `aws ... --profile {role}`")
+    if role in READ_LOG_ROLES:
+        click.echo(LABS_LOGS_HINT.format(profile=role))
 
 
 def request_role(role: str, reason: str, minutes: int, agent: str, call: Optional[Callable] = None) -> dict:
