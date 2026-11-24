@@ -326,6 +326,17 @@ def _read_version(plugin_dir: Path) -> str:
     return ""
 
 
+def _install_version(plugin_dir: Path, sha: str) -> str:
+    """The version label an install of `sha` goes under.
+
+    plugin.json's `version` when it has one. A plugin whose plugin.json carries no
+    `version` (chrome-sales keeps its version in marketplace.json) is labelled the way
+    Claude Code labels it: the commit's first 12 hex characters. Refusing it instead
+    froze such a plugin at whatever `claude plugin install` first put down.
+    """
+    return _read_version(plugin_dir) or (sha or "")[:12]
+
+
 # ── runtime bundle (repo-root code shipped alongside the plugin) ────────────
 #
 # Some plugins (canopy) keep their executable runtime at the REPO root, outside
@@ -643,7 +654,7 @@ def _update_behind(target: dict, result: dict, clone: str, branch: str, remote_s
 
     source = _plugin_source_subdir(clone, name)
     plugin_dir = (Path(clone) / source).resolve()
-    version = _read_version(plugin_dir)
+    version = _install_version(plugin_dir, remote_sha)
     if not version:
         result.update(status="error", error="unreadable plugin.json version")
         return result
@@ -1172,7 +1183,7 @@ def refresh_plugin(name: str, clone: str, *, wait: float = REFRESH_WAIT) -> dict
             result["status"] = "up-to-date"
             return result
         plugin_dir = (Path(clone) / _plugin_source_subdir(clone, name)).resolve()
-        version = _read_version(plugin_dir)
+        version = _install_version(plugin_dir, head)
         if not version:
             result["error"] = "unreadable plugin.json version"
             return result
