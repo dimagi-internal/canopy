@@ -803,6 +803,26 @@ improvising. The one turn-specific rule: **a turn that opened a PR does not clos
 merge state** (`MERGED` / `OPEN` / `CLOSED`, from `gh pr view <n> --json state`) and the next planned
 action; "auto-merge armed" / "checks running" / "PR queued" is not a close.
 
+## Do it yourself or dispatch?
+
+When you are already holding the context for a piece of work (you diagnosed it in this session)
+and can reach its repo, **do it yourself, here**. That is the default, including for code in
+canopy or canopy-web. Dispatching (`canopy agent dispatch`, a fix brief, a coding session at a
+repo) has costs the brief never shows. A fresh session must rebuild what you already know from
+your summary. The person now has another session to track, and its result to wait on and check.
+Two sessions may end up editing the same files. And you can no longer tell them it is done.
+
+Dispatch only when it is genuinely cleaner:
+- the work belongs to **another agent** (its repo, its mandate, its credentials or mailbox);
+- it needs a **different box or identity** than this session has;
+- it is **parallel work** that should not block this conversation, and the person wants it in
+  the background; or
+- it is **large and separable**, and a clean context is worth the hand-off.
+
+A person asking you a question in chat about something you just diagnosed is the clearest case
+for doing it yourself: they are here and waiting, and a brief answered with "I sent another
+session" leaves them coordinating work they asked you to do.
+
 ## Related skills
 - `<slug>:agent-turn-review` — YOUR wrapper, by full name; gates every outbound reply. Invoke the
   wrapper, never the fleet `canopy:agent-turn-review` directly.
