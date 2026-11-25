@@ -187,12 +187,32 @@ class FakeZkVault:
             raise self.wrap_error
 
 
-def test_a_new_agent_with_no_vault_key_is_stored_through_canopy_webs_sealing_write():
-    v = FakeZkVault({"enabled": True, "kv": 0})
+def test_a_new_agent_with_no_vault_key_is_sealed_here_to_its_readers():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from orchestrator import vault_zk as zk
+    from orchestrator import vault_zk_cli as zc
+
+    owner = ec.generate_private_key(ec.SECP256R1())
+
+    class Born(zc.ZkVault):
+        puts: list = []
+
+        def state(self, refresh=False):
+            return {"enabled": True, "kv": 0, "agent_id": "5", "wraps": [], "pending": [
+                {"kind": "member", "target": "7", "public_jwk": zk.jwk(owner.public_key())}]}
+
+        def web(self, method, path, body=None):
+            self.puts.append((method, path, body))
+            return {}
+
+    v = Born("trellis", token="t")
     line = ga.vault_store("trellis", vault=v)({"GOOGLE_ACCOUNT": "t@dimagi-ai.com", "GOOGLE_PASSWORD": PW})
-    assert v.puts == [("PUT", "/api/agents/trellis/credentials",
-                       {"values": {"GOOGLE_ACCOUNT": "t@dimagi-ai.com", "GOOGLE_PASSWORD": PW}})]
-    assert "sealed" in line and PW not in line
+    [(method, path, body)] = v.puts
+    assert (method, path) == ("PUT", "/api/agents/trellis/vault/zk/values")
+    assert PW not in json.dumps(body) and "sealed" in line and PW not in line
+    sealed = {x["name"]: x["value_zk"] for x in body["values"]}
+    assert zk.open_sealed(sealed["GOOGLE_PASSWORD"], "5", "GOOGLE_PASSWORD", "member", "7", owner) == PW
 
 
 def test_an_agent_with_a_vault_key_still_needs_this_devices_copy_before_google():
