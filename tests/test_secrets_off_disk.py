@@ -327,3 +327,16 @@ def test_out_never_writes_the_extras(tmp_path, turn_root, monkeypatch):
                                                  "--out", str(out)])
     assert r.exit_code == 0, r.output
     assert "tok" not in out.read_text() and "CANOPY_WEB_PAT=w" in out.read_text()
+
+
+def test_a_pretty_printed_json_key_reaches_the_command_on_one_line():
+    """A service-account key saved as the downloaded file (line breaks between fields) used
+    to be dropped; it now arrives as the same JSON on one line. A PEM stays out."""
+    import json
+    key = '{\n  "type": "service_account",\n  "private_key": "-----BEGIN-----\\nabc\\n-----END-----\\n"\n}'
+    pem = "-----BEGIN KEY-----\nabc\n-----END KEY-----"
+    usable, skipped = cred_cli.env_values({"SA_JSON": key, "PEM": pem, "PLAIN": "x"})
+    assert "\n" not in usable["SA_JSON"]
+    assert json.loads(usable["SA_JSON"]) == json.loads(key)
+    assert json.loads(usable["SA_JSON"])["private_key"].count("\n") == 3
+    assert usable["PLAIN"] == "x" and skipped == ["PEM"]

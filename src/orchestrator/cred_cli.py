@@ -497,12 +497,28 @@ def sealed_skipped(slug: str) -> list:
     return list(_SEALED_SKIPPED.get(slug) or [])
 
 
+def _one_line_json(val: str) -> str:
+    """A JSON object or array pasted as a pretty-printed file (a Google service-account key)
+    re-serialised on one line, so it fits an env var and a one-line env file; the same data
+    to any JSON reader. Anything else comes back unchanged (a PEM key stays multi-line)."""
+    import json
+    try:
+        parsed = json.loads(val)
+    except ValueError:
+        return val
+    if not isinstance(parsed, (dict, list)):
+        return val
+    return json.dumps(parsed, ensure_ascii=False)
+
+
 def env_values(values: dict) -> tuple[dict, list]:
     """({NAME: value} usable as environment variables, [names that are not])."""
     usable, skipped = {}, []
     for name in sorted(values):
         val = values[name]
         val = "" if val is None else str(val)
+        if _ENV_NAME_RE.match(str(name)) and "\n" in val:
+            val = _one_line_json(val)
         if not _ENV_NAME_RE.match(str(name)) or "\n" in val:
             skipped.append(str(name))  # not an env var (e.g. gog-token): staged elsewhere
             continue
