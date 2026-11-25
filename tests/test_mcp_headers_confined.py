@@ -62,3 +62,32 @@ def test_canopy_profile_env_without_a_token_never_sends_the_pat(tmp_path):
     prof.write_text(json.dumps({"capability": {}}))
     assert PAT not in _run(home, tmp_path, {"CANOPY_PROFILE": str(prof)})
     assert PAT not in _run(home, tmp_path, {"CANOPY_PROFILE": str(tmp_path / "missing.json")})
+
+
+# Claude Code runs the helper from the PLUGIN's directory, not the session's
+# worktree, so the cwd never names the cx- task. emdash exports EMDASH_TASK_NAME
+# into the session and it reaches the helper (not secret-looking). A cwd-only
+# lookup left every laptop confined session with no token at all (a 401 and
+# OAuth placeholders, no site tools), or, with no CANOPY_AGENT, the owner's PAT.
+
+def test_a_cx_task_sends_its_caller_token_when_the_helper_runs_outside_the_worktree(tmp_path):
+    home = _home(tmp_path)
+    (home / ".canopy/profiles/cx-re-pay-4a4e.json").write_text(json.dumps({"mcp_token": "cct_abc"}))
+    plugin_root = tmp_path / "plugin-root"
+    plugin_root.mkdir()
+    for extra in ({}, {"CANOPY_AGENT": "connect-helper"}):
+        assert _run(home, plugin_root, {"EMDASH_TASK_NAME": "cx-re-pay-4a4e", **extra}) == "Bearer cct_abc"
+
+
+def test_a_cx_task_without_a_profile_never_sends_the_pat_from_outside_the_worktree(tmp_path):
+    home = _home(tmp_path)
+    plugin_root = tmp_path / "plugin-root"
+    plugin_root.mkdir()
+    got = _run(home, plugin_root, {"EMDASH_TASK_NAME": "cx-re-pay-4a4e"})
+    assert got.startswith("Bearer cct_missing") and PAT not in got
+
+
+def test_a_non_cx_task_name_is_not_confined(tmp_path):
+    home = _home(tmp_path)
+    (home / ".canopy/profiles/cx-re-pay-4a4e.json").write_text(json.dumps({"mcp_token": "cct_abc"}))
+    assert _run(home, tmp_path, {"EMDASH_TASK_NAME": "c-daily-6886"}) == f"Bearer {PAT}"

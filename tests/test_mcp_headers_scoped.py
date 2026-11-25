@@ -62,3 +62,12 @@ def test_a_non_token_file_is_not_a_scoped_session_on_a_laptop(tmp_path):
     wt = home / "emdash" / "worktrees" / "ace" / "emdash" / "ace-chat-x1-q7r2k"
     wt.mkdir(parents=True)
     assert _run(home, wt) == f"Bearer {PAT}"
+
+
+def test_a_laptop_scoped_session_sends_its_token_when_the_helper_runs_outside_the_worktree(tmp_path):
+    """Claude Code runs the helper from the plugin root; EMDASH_TASK_NAME names the task."""
+    home = tmp_path / "home"
+    _token(home, "task", "c-ace-chat-x1")
+    elsewhere = tmp_path / "plugin-root"
+    elsewhere.mkdir()
+    assert _run(home, elsewhere, {"EMDASH_TASK_NAME": "c-ace-chat-x1"}) == "Bearer cct_asker"

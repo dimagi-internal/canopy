@@ -61,15 +61,22 @@ function confinedProfile() {
   if (process.env.CANOPY_PROFILE) {
     return { confined: true, profile: readProfile(process.env.CANOPY_PROFILE) };
   }
-  // Any component of the working directory: emdash starts the session in its
-  // worktree, and a helper run from a subdirectory must reach the same answer.
-  const parts = process.cwd().split(path.sep);
-  const marked = parts.filter((p) => p.startsWith("emdash-cx-"));
-  if (marked.length === 0) return { confined: false, profile: null };
-  const leaf = marked[0].slice("emdash-".length);           // cx-<subject>-<disc>-<suffix>
+  // The task name first: Claude Code runs this helper from the PLUGIN's directory,
+  // so the cwd never names the session's worktree, while EMDASH_TASK_NAME (exported
+  // by emdash, not secret-looking) does arrive. Then any component of the working
+  // directory, for a helper run by hand from the worktree or a subdirectory of it.
+  const names = [];
+  const task = (process.env.EMDASH_TASK_NAME || "").trim();
+  if (task.startsWith("cx-")) names.push(task);
+  for (const p of process.cwd().split(path.sep)) {
+    if (!p.startsWith("emdash-cx-")) continue;
+    const leaf = p.slice("emdash-".length);                 // cx-<subject>-<disc>-<suffix>
+    // emdash appends a random `-<suffix>` to the task name; try with and without it.
+    names.push(leaf, leaf.replace(/-[a-z0-9]+$/, ""));
+  }
+  if (names.length === 0) return { confined: false, profile: null };
   const root = path.join(os.homedir(), ".canopy", "profiles");
-  // emdash appends a random `-<suffix>` to the task name; try with and without it.
-  for (const name of [leaf, leaf.replace(/-[a-z0-9]+$/, "")]) {
+  for (const name of names) {
     if (!/^cx-[a-z0-9-]{1,200}$/.test(name)) continue;
     const p = readProfile(path.join(root, `${name}.json`));
     if (p) return { confined: true, profile: p };
@@ -130,6 +137,13 @@ function scopedSession() {
   if (turn) {
     if (!/^[0-9a-fA-F-]{8,64}$/.test(turn)) return { scoped: true, token: "" };
     return { scoped: true, token: readScoped(path.join(SCOPED_ROOT, "turn", `${turn}.token`)) };
+  }
+  // The task name first (Claude Code runs this from the plugin root, so the cwd
+  // below only matches when the helper is run by hand from the worktree).
+  const task = (process.env.EMDASH_TASK_NAME || "").trim();
+  if (task && /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(task)) {
+    const token = readScoped(path.join(SCOPED_ROOT, "task", `${task}.token`));
+    if (token) return { scoped: true, token };
   }
   const worktrees = path.join(os.homedir(), "emdash", "worktrees") + path.sep;
   const cwd = process.cwd() + path.sep;
