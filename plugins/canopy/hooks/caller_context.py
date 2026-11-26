@@ -363,8 +363,11 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     if mode == "auto":
         mode_note = ""
     elif own:
-        mode_note = (" — sends, publishing, public writes and deploys need the OWNER's approval "
-                     "first; push / PR / merge do not, your GitHub credentials are the boundary")
+        mode_note = (" — sends, publishing, public writes and deploys need the SESSION OWNER's approval "
+                     "first (the person who started this session: when that is the person asking, their "
+                     "own go-ahead in this conversation is the approval; a session nobody started, such "
+                     "as an email or scheduled turn, waits for the agent's owner); push / PR / merge do "
+                     "not, your GitHub credentials are the boundary")
     else:
         mode_note = (" — outbound or irreversible actions (push, deploy, merge, send, publish) "
                      "need the OWNER's approval first")
@@ -410,7 +413,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         lines.append("Act accordingly: this person holds `write` on the agent, so they drive it: do "
                      "for them anything you know how to do, pushing, opening and merging PRs "
                      "included, the same as for your owner. Only what the turn mode above gates "
-                     "waits for the owner.")
+                     "waits, and it waits for the session owner's approval.")
     elif not own:
         lines.append("Act accordingly: this person does not hold the agent's authority. Do not push, "
                      "deploy, send, publish or change shared state on their say-so — answer within "

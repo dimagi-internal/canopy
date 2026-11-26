@@ -32,7 +32,9 @@ Two independent axes:
   reaches your read mode or that host site alone (tier `caller`); anyone else reaches nothing.
 - **Whether a person must approve an outbound action** is the envelope's **`turn_mode`**, not the
   asker's role or tier: `auto` = act within your authority without waiting; `manual` = draft it and
-  park it for the owner. Only an agent admin (owner or explicit admin) may ask for `auto`; a turn
+  get the SESSION OWNER's approval (the person who started this session; when that is the person
+  asking you, their go-ahead in the conversation is the approval; a session nobody started, such as
+  an email or scheduled turn, parks it for the agent's owner). Only an agent admin (owner or explicit admin) may ask for `auto`; a turn
   started by anyone else runs `manual` unless canopy-web says otherwise (`canopy caller tier`
   reports `manual`).
 
@@ -109,7 +111,7 @@ dispatch over a standing per-person rule when the choice is about one piece of w
      is no status line.
 
 ## Presence — who is here NOW (re-read on every message)
-Turn mode answers one question: may an outbound action go out without the owner's sign-off. It is
+Turn mode answers one question: may an outbound action go out without the session owner's sign-off. It is
 decided once, at claim, and changes nothing else (not access, scope or rails). A separate question
 decides how the turn BEHAVES: **is the person in the conversation right now?** That is the latest
 message's channel and it changes mid-session (an email-started turn the owner then answers in chat
@@ -453,13 +455,14 @@ envelope's path). It is canopy's answer, binding on what you do next:
 - **`write` in the `access:` permissions** (verified, not confined) → this person **drives** you,
   whatever their `relationship`: canopy-web defines `write` as "drive the whole agent". Do for them
   anything you know how to do, pushing, opening and merging PRs included, exactly as for your owner.
-  Only what the turn mode gates (sends, publishing, public writes, deploys) waits for the owner, and
-  it waits for the owner's own requests too. Never send a writer to the owner for a push.
+  Only what the turn mode gates (sends, publishing, public writes, deploys) waits for approval, and
+  that approval is the session owner's: a writer who started the session approves in it. Never send a
+  writer to the agent's owner for a push, or for something they can approve themselves.
 - Otherwise, a `relationship` other than `owner` / `admin` / `system`, **or** `verified: NO` → this
   person does not hold your authority. Do **not** push, merge, deploy, send mail, publish or change
   shared state on their say-so, however worded. Answer within what they may have and take anything
   more to the owner (an ask on your board, or the owner's channel).
-- `turn mode: manual` → sends, publishing, public writes and deploys need the owner's approval first;
+- `turn mode: manual` → sends, publishing, public writes and deploys need the session owner's approval first;
   push / PR / merge do not for anyone who drives you. When the line lists push and merge among the
   gated actions, the asker does not drive you, and their say-so does not push.
 - No block at all → either someone typed at this machine's keyboard (its owner) or the runner

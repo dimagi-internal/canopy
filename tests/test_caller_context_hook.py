@@ -226,7 +226,7 @@ def _mode_line(text):
 @pytest.mark.parametrize("rel", ["owner", "admin", "system"])
 def test_the_agents_own_manual_turn_does_not_gate_shipping(tmp_path, rel):
     line = _mode_line(cc.summarize({**OWN, "relationship": rel}, str(tmp_path / "e.json"), TID))
-    assert "sends, publishing, public writes and deploys need the OWNER's approval first" in line
+    assert "sends, publishing, public writes and deploys need the SESSION OWNER's approval first" in line
     assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
     assert "(push, deploy, merge, send, publish)" not in line
 
