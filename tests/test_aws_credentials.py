@@ -28,6 +28,16 @@ def _no_call(*a, **k):
     raise AssertionError("canopy-web must not be called")
 
 
+def _unsealed(call):
+    """`call` behind a canopy-web with nothing sealed for the role: the sealed route answers
+    404 `no_sealed_source`, so `canopy aws credentials` goes on to canopy-web's own route."""
+    def wrapped(method, path, body):
+        if path.endswith("/aws-credentials/sealed"):
+            raise aws_cli.canopy_web.CanopyError(f'{method} {path} -> 404: {{"error": "no_sealed_source"}}')
+        return call(method, path, body)
+    return wrapped
+
+
 def test_canopy_web_as_the_agent_keeps_only_process_keys(tmp_path):
     calls = []
 
@@ -36,7 +46,7 @@ def test_canopy_web_as_the_agent_keeps_only_process_keys(tmp_path):
         return GOOD
 
     out = aws_cli.aws_credentials("labs-observe", "hal",
-                                  cache_dir=tmp_path, call=call)
+                                  cache_dir=tmp_path, call=_unsealed(call))
     assert calls == [("POST", "/api/agents/hal/aws-credentials", {"role": "labs-observe"})]
     assert set(out) == {"Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
     assert stat.S_IMODE((tmp_path / "hal--labs-observe.json").stat().st_mode) == 0o600
@@ -57,7 +67,7 @@ def test_cached_keys_are_reused_until_near_expiry(tmp_path):
     (tmp_path / "hal--labs-observe.json").write_text(json.dumps(stale))
     fresh = dict(GOOD, AccessKeyId="ASIANEW")
     out = aws_cli.aws_credentials("labs-observe", "hal",
-                                  cache_dir=tmp_path, call=lambda *a: fresh)
+                                  cache_dir=tmp_path, call=_unsealed(lambda *a: fresh))
     assert out["AccessKeyId"] == "ASIANEW"
 
 
@@ -115,7 +125,7 @@ def test_labs_read_falls_back_to_the_old_name_where_a_source_predates_it(tmp_pat
         return GOOD
 
     out = aws_cli.aws_credentials("labs-read", "hal",
-                                  cache_dir=tmp_path, call=old_canopy_web)
+                                  cache_dir=tmp_path, call=_unsealed(old_canopy_web))
     assert asked == ["labs-read", "labs-observe"]
     assert out["AccessKeyId"] == "ASIA"
     assert (tmp_path / "hal--labs-read.json").exists()
@@ -127,7 +137,7 @@ def test_a_refusal_of_every_name_reports_the_new_one(tmp_path):
 
     with pytest.raises(click.ClickException, match="labs-read for hal"):
         aws_cli.aws_credentials("labs-read", "hal",
-                                cache_dir=tmp_path, call=refuse)
+                                cache_dir=tmp_path, call=_unsealed(refuse))
 
 
 @pytest.mark.parametrize("role", ["labs-read", "labs-readwrite", "labs-config", "labs-observe"])
@@ -145,7 +155,7 @@ def test_approval_required_says_how_to_ask(tmp_path):
 
     with pytest.raises(click.ClickException) as exc:
         aws_cli.aws_credentials("labs-readwrite", "hal",
-                                cache_dir=tmp_path, call=refuse)
+                                cache_dir=tmp_path, call=_unsealed(refuse))
     msg = exc.value.message
     assert "\n" not in msg
     assert 'canopy aws request --role labs-readwrite --reason' in msg
@@ -159,7 +169,7 @@ CARD = {"id": 7, "agent": "hal", "role": "labs-readwrite", "reason": "restore a 
 def test_request_posts_the_role_reason_and_minutes():
     calls = []
     card = aws_cli.request_role("labs-readwrite", "  restore a\nrehearsal copy ", 90, "hal",
-                                call=lambda *a: calls.append(a) or CARD)
+                                call=lambda *a: calls.append(a) or CARD, delivery="custodial")
     assert calls == [("POST", "/api/agents/hal/aws-role-requests",
                       {"role": "labs-readwrite", "reason": "restore a rehearsal copy", "minutes": 90})]
     assert card["approval_url"].endswith("/approvals/41")

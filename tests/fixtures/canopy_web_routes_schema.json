@@ -174,6 +174,11 @@
     "operationId": "agent_aws_credentials"
    }
   },
+  "/api/agents/{slug}/aws-credentials/sealed": {
+   "post": {
+    "operationId": "agent_aws_sealed_credentials"
+   }
+  },
   "/api/agents/{slug}/aws-role-requests": {
    "get": {
     "operationId": "list_aws_role_requests"
@@ -187,20 +192,19 @@
     "operationId": "revoke_aws_role_request"
    }
   },
+  "/api/agents/{slug}/aws-role-requests/{request_id}/sealed-session": {
+   "put": {
+    "operationId": "put_aws_sealed_session"
+   }
+  },
+  "/api/agents/{slug}/aws-role-requests/{request_id}/sealing": {
+   "get": {
+    "operationId": "get_aws_sealing"
+   }
+  },
   "/api/agents/{slug}/bootstrap-report": {
    "post": {
     "operationId": "post_bootstrap_report"
-   }
-  },
-  "/api/agents/{slug}/browser-sign-in": {
-   "delete": {
-    "operationId": "switch_off_browser_sign_in"
-   },
-   "get": {
-    "operationId": "get_browser_sign_in"
-   },
-   "put": {
-    "operationId": "switch_on_browser_sign_in"
    }
   },
   "/api/agents/{slug}/canopy-login": {
@@ -938,6 +942,11 @@
     "operationId": "add_agent_zk_wraps"
    }
   },
+  "/api/agents/{slug}/vault/zk/wraps/mine": {
+   "post": {
+    "operationId": "add_my_device_zk_wraps"
+   }
+  },
   "/api/approvals/": {
    "get": {
     "operationId": "list_approvals"
@@ -956,6 +965,16 @@
     "operationId": "get_approval"
    }
   },
+  "/api/approvals/{approval_id}/approve/begin": {
+   "post": {
+    "operationId": "begin_approve_approval"
+   }
+  },
+  "/api/approvals/{approval_id}/approve/finish": {
+   "post": {
+    "operationId": "finish_approve_approval"
+   }
+  },
   "/api/approvals/{approval_id}/cancel": {
    "post": {
     "operationId": "cancel_approval"
@@ -969,6 +988,29 @@
   "/api/auth/contact-token": {
    "post": {
     "operationId": "contact_token"
+   }
+  },
+  "/api/aws/sealed-keys": {
+   "get": {
+    "operationId": "list_aws_sealed_keys"
+   }
+  },
+  "/api/aws/sealed-keys/holders": {
+   "get": {
+    "operationId": "list_aws_sealed_key_holders"
+   }
+  },
+  "/api/aws/sealed-keys/machines/{slug}": {
+   "get": {
+    "operationId": "list_aws_sealed_key_machines"
+   }
+  },
+  "/api/aws/sealed-keys/{role}": {
+   "delete": {
+    "operationId": "delete_aws_sealed_key"
+   },
+   "put": {
+    "operationId": "put_aws_sealed_key"
    }
   },
   "/api/beta-requests": {
@@ -1033,6 +1075,14 @@
   "/api/brain/outputs/": {
    "get": {
     "operationId": "list_outputs"
+   }
+  },
+  "/api/brain/outputs/{output_id}/fix": {
+   "get": {
+    "operationId": "get_output_fix_plan"
+   },
+   "post": {
+    "operationId": "ask_output_fix"
    }
   },
   "/api/brain/outputs/{output_id}/merge": {
@@ -1972,6 +2022,11 @@
     "operationId": "finish_confirm_host_grant"
    }
   },
+  "/api/embed/prepare": {
+   "post": {
+    "operationId": "embed_prepare"
+   }
+  },
   "/api/embed/self": {
    "get": {
     "operationId": "embed_self"
@@ -2094,6 +2149,11 @@
   "/api/harness/fleet-stop": {
    "post": {
     "operationId": "stop_fleet"
+   }
+  },
+  "/api/harness/latency/contact": {
+   "get": {
+    "operationId": "contact_latency"
    }
   },
   "/api/harness/local-turns/": {
@@ -2638,6 +2698,11 @@
     "operationId": "list_streams"
    }
   },
+  "/api/harness/runners/{runner_id}/sync": {
+   "get": {
+    "operationId": "get_runner_sync"
+   }
+  },
   "/api/harness/runners/{runner_id}/turns/{turn_id}/agent-token": {
    "post": {
     "operationId": "turn_agent_token"
@@ -2832,9 +2897,24 @@
     "operationId": "finish_turn"
    }
   },
+  "/api/harness/turns/{turn_id}/latency": {
+   "get": {
+    "operationId": "get_turn_latency"
+   }
+  },
+  "/api/harness/turns/{turn_id}/live-text": {
+   "post": {
+    "operationId": "post_turn_live_text"
+   }
+  },
   "/api/harness/turns/{turn_id}/messages": {
    "get": {
     "operationId": "read_turn_messages"
+   }
+  },
+  "/api/harness/turns/{turn_id}/page-brief": {
+   "get": {
+    "operationId": "get_turn_page_brief"
    }
   },
   "/api/harness/turns/{turn_id}/start": {
@@ -3334,21 +3414,6 @@
   "/api/me/act-as-requests/{request_id}": {
    "get": {
     "operationId": "get_act_as_request"
-   }
-  },
-  "/api/me/act-as-requests/{request_id}/approve/begin": {
-   "post": {
-    "operationId": "begin_approve_act_as_request"
-   }
-  },
-  "/api/me/act-as-requests/{request_id}/approve/finish": {
-   "post": {
-    "operationId": "finish_approve_act_as_request"
-   }
-  },
-  "/api/me/act-as-requests/{request_id}/decline": {
-   "post": {
-    "operationId": "decline_act_as_request"
    }
   },
   "/api/me/act-as-requests/{request_id}/stop": {
@@ -4404,6 +4469,14 @@
     "operationId": "get_vault_setup"
    }
   },
+  "/api/vault/test-key": {
+   "get": {
+    "operationId": "get_own_test_key"
+   },
+   "put": {
+    "operationId": "put_own_test_key"
+   }
+  },
   "/api/vaults/{vault_id}": {
    "get": {
     "operationId": "get_workspace_vault"
@@ -4556,6 +4629,11 @@
   "/api/workspace-apps/{workspace}/{key}/actions/{action}/bulk": {
    "post": {
     "operationId": "bulk_act_workspace_app"
+   }
+  },
+  "/api/workspace-apps/{workspace}/{key}/ai/complete": {
+   "post": {
+    "operationId": "ai_complete_workspace_app"
    }
   },
   "/api/workspace-apps/{workspace}/{key}/draft": {
@@ -4713,6 +4791,41 @@
    },
    "patch": {
     "operationId": "patch_workspace_project"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/": {
+   "get": {
+    "operationId": "get_project_files"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/content": {
+   "get": {
+    "operationId": "get_project_file"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/draft": {
+   "put": {
+    "operationId": "put_project_files_draft"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}": {
+   "delete": {
+    "operationId": "discard_project_files_draft"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/draft/{number}/publish": {
+   "post": {
+    "operationId": "publish_project_files"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/revisions/": {
+   "get": {
+    "operationId": "list_project_file_revisions"
+   }
+  },
+  "/api/workspace-projects/{workspace}/{handle}/files/revisions/{number}/rollback": {
+   "post": {
+    "operationId": "rollback_project_files"
    }
   },
   "/api/workspace-projects/{workspace}/{handle}/kb/file": {
