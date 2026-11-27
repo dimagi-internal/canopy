@@ -309,14 +309,34 @@ def ensure_on_branch(clone: str, branch: str) -> str:
     return ""
 
 
-def _plugin_source_subdir(clone: str, name: str) -> str:
-    """Read the plugin's `source` from the clone's marketplace.json (default './')."""
+def _plugin_source(clone: str, name: str):
+    """The plugin's `source` from the clone's marketplace.json (default './'): a path in the
+    clone, or a dict when the plugin lives in another repo (`{"source": "url", "url": …}`)."""
     mp = load_json(Path(clone) / ".claude-plugin" / "marketplace.json")
     if isinstance(mp, dict):
         for plug in mp.get("plugins", []):
-            if plug.get("name") == name:
+            if isinstance(plug, dict) and plug.get("name") == name:
                 return plug.get("source", "./") or "./"
     return "./"
+
+
+def _remote_source(clone: str, name: str) -> str:
+    """'' when the plugin is a path in `clone`; else what its remote source is. Such a clone
+    holds only the marketplace, so there is nothing in it to copy into the cache."""
+    src = _plugin_source(clone, name)
+    if not isinstance(src, dict):
+        return ""
+    return f"{src.get('source') or 'remote'} {src.get('url') or src.get('repo') or ''}".strip()
+
+
+def _plugin_source_subdir(clone: str, name: str) -> str:
+    """The plugin's path in the clone. A remote source has none: callers check
+    `_remote_source` first, and this refuses one by name rather than as a TypeError."""
+    src = _plugin_source(clone, name)
+    if isinstance(src, dict):
+        raise ValueError(f"{name}'s marketplace source is remote ({_remote_source(clone, name)}), "
+                         f"not a path in {clone}")
+    return src
 
 
 def _read_version(plugin_dir: Path) -> str:
@@ -1172,6 +1192,11 @@ def refresh_plugin(name: str, clone: str, *, wait: float = REFRESH_WAIT) -> dict
     entry = installed()
     result.update(old_ver=entry.get("version", "?"), new_ver=entry.get("version", "?"),
                   old_sha=entry.get("gitCommitSha", "")[:8], new_sha=entry.get("gitCommitSha", "")[:8])
+    remote = _remote_source(clone, name)
+    if remote:
+        result["error"] = (f"source is remote ({remote}); this clone holds only the marketplace — "
+                           f"`claude plugin update {key}` refreshes it")
+        return result
     if current(entry):
         result["status"] = "up-to-date"
         return result

@@ -259,6 +259,49 @@ def test_a_failed_refresh_fails_the_plugins_step_with_the_updaters_reason(tmp_pa
     assert any("refresh ace: ace error: sync: copy failed" in n for n in rep.notes), rep.notes
 
 
+
+def test_a_plugin_whose_marketplace_points_at_another_repo_is_updated_by_claude(tmp_path):
+    """nova's marketplace.json now names a url source: the clone holds no plugin to copy, so the
+    updater cannot refresh it; `claude plugin update` fetches it from that repo."""
+    _repo(tmp_path / "agents", required=[{"name": "nova", "marketplace": "dimagi-internal/nova",
+                                         "marketplace_name": "nova-marketplace"}])
+    dep = tmp_path / "deps" / "nova"
+    (dep / ".git").mkdir(parents=True)
+    (dep / ".claude-plugin").mkdir()
+    (dep / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"name": "nova-marketplace", "plugins": [{"name": "nova", "source": {
+            "source": "url", "url": "https://github.com/voidcraft-labs/nova-plugin.git"}}]}))
+    updater = _canopy_updater(tmp_path / "home")
+    box = Box(tmp_path)
+    box.markets |= {"ace", "nova-marketplace"}
+    box.plugins |= {"ace@ace", "nova@nova-marketplace"}
+
+    rep = _prep(tmp_path, box).prepare("ace")
+
+    refreshed = [c[0][3] for c in box.ran(["python3", str(updater), "--refresh"])]
+    assert refreshed == ["ace"], "the updater is never asked to copy a remote-source plugin"
+    assert ["claude", "plugin", "update", "nova@nova-marketplace"] in [c[0] for c in box.calls]
+    assert rep.plugins == "2 ok", rep.notes
+
+
+def test_a_crashed_refresh_reports_the_exception_not_the_traceback_header(tmp_path):
+    _repo(tmp_path / "agents")
+    _canopy_updater(tmp_path / "home")
+    box = Box(tmp_path)
+    box.markets.add("ace")
+    box.plugins.add("ace@ace")
+    real = box.__call__
+
+    def run(argv, **kw):
+        if argv[:1] == ["python3"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr=(
+                "Traceback (most recent call last):\n  File \"x.py\", line 1, in <module>\n"
+                "TypeError: unsupported operand type(s) for /: 'PosixPath' and 'dict'\n"))
+        return real(argv, **kw)
+
+    rep = _prep(tmp_path, run).prepare("ace")
+    assert any("refresh ace: TypeError: unsupported operand" in n for n in rep.notes), rep.notes
+
 def test_an_agent_repo_without_a_marketplace_manifest_fails_the_plugins_step(tmp_path):
     repo = _repo(tmp_path / "agents")
     (repo / ".claude-plugin" / "marketplace.json").unlink()
