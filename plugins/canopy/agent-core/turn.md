@@ -160,7 +160,9 @@ AWS for>"` in the background (or with a 10-minute timeout); it pushes a tap-to-a
 runner owner and finishes when they approve. Raw `aws sso login` is deny-railed. Every agent AWS role
 (`labs-read`, `labs-readwrite`, `labs-config`) is fenced: unless canopy-web lists you as standing for it,
 `canopy aws request --role <r> --reason "<why, now>"` prints an approval page an owner of your workspace
-approves with a passkey, and `canopy aws requests` shows when the grant is live.
+approves with a passkey, and `canopy aws requests` shows when the grant is live. Where the role has a sealed
+key, the approver's browser makes the keys and seals them to your machine, so canopy-web never holds them; if
+`canopy aws credentials` says the grant waits for the approver's browser, ask them to open the request's page.
 
 ## Step 2 — Process inbound, one counterpart at a time
 

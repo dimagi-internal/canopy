@@ -322,8 +322,12 @@ def login_cmd(profile: str, reason: str, requested_by: str, timeout: int, force:
 #   access roles, no audit tampering, production DB and backups not deletable).
 # * `labs-config` (`labs-jj-agent-config`): create and update labs app secrets, never read one.
 #
-# The one source is canopy-web, `POST /api/agents/<slug>/aws-credentials`, as this agent's
-# own login (canopy-web's task role assumes the role). The cloud runners' box broker no
+# Two sources, in order. First the agent's SEALED source (`orchestrator/aws_sealed.py`): the
+# session an approver's browser made and sealed to this machine, or, for a standing agent, the
+# role's own key sealed to this machine, with which it asks STS itself — canopy-web carries only
+# ciphertext. Then, when canopy-web has nothing sealed for the role, canopy-web itself,
+# `POST /api/agents/<slug>/aws-credentials`, as this agent's own login (canopy-web's task role
+# assumes the role). The cloud runners' box broker no
 # longer vends anything: it could not verify which agent was asking, so it could not honour
 # an approval. A source that predates `labs-read` refuses the name; the request is then
 # repeated as `labs-observe` (same IAM role).
@@ -403,7 +407,11 @@ def aws_credentials(role: str, agent: str, *, cache_dir: Optional[Path] = None,
             return _process_json(cached)
     except (OSError, ValueError, click.ClickException):
         pass
-    doc = _with_fallbacks(role, lambda name: from_canopy_web(name, agent, call=call))
+    from orchestrator import aws_sealed
+
+    doc = aws_sealed.fetch(role, agent, call) if agent else None
+    if doc is None:
+        doc = _with_fallbacks(role, lambda name: from_canopy_web(name, agent, call=call))
     out = _process_json(doc)
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(cached_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -459,17 +467,34 @@ def profile_cmd(role: str):
                f"use `aws ... --profile {role}`")
 
 
-def request_role(role: str, reason: str, minutes: int, agent: str, call: Optional[Callable] = None) -> dict:
-    """File a request for a fenced role (`POST /api/agents/<slug>/aws-role-requests`); the request's card."""
+def request_role(role: str, reason: str, minutes: int, agent: str, call: Optional[Callable] = None,
+                 delivery: str = "auto") -> dict:
+    """File a request for a fenced role (`POST /api/agents/<slug>/aws-role-requests`); the request's card.
+
+    `delivery`: `sealed` (the approver's browser makes the keys and seals them to this machine, so
+    canopy-web never holds them), `custodial` (canopy-web makes them), or `auto`: sealed when the
+    role has a sealed key, else custodial."""
     call = call or canopy_web.call
     reason = " ".join((reason or "").split())
     if not reason:
         raise click.UsageError("--reason must say why the agent needs the role now; the approver reads it.")
     if not agent:
         raise click.ClickException("no agent: run inside an agent's session, or pass --agent <slug>")
+    def ask(how: str) -> dict:
+        body = {"role": role, "reason": reason, "minutes": minutes}
+        return call("POST", f"/api/agents/{agent}/aws-role-requests", body if how == "custodial" else
+                    {**body, "delivery": how})
+
     try:
-        return call("POST", f"/api/agents/{agent}/aws-role-requests",
-                    {"role": role, "reason": reason, "minutes": minutes})
+        if delivery != "auto":
+            return ask(delivery)
+        try:
+            return ask("sealed")
+        except canopy_web.CanopyError as exc:
+            # No sealed key for the role yet, or a canopy-web that predates sealed delivery.
+            if "-> 422" not in str(exc) or ("sealed key" not in str(exc) and "delivery" not in str(exc)):
+                raise
+            return ask("custodial")
     except canopy_web.CanopyError as exc:
         raise click.ClickException(f"canopy-web refused the request for AWS role {role} for {agent}: {exc}")
 
@@ -492,10 +517,13 @@ def describe_request(card: dict) -> str:
 @click.option("--minutes", default=60, show_default=True, type=click.IntRange(15, 480),
               help="How long the grant lasts once approved.")
 @click.option("--agent", default="", help="Which agent is asking. Default: this session's agent.")
-def request_cmd(role: str, reason: str, minutes: int, agent: str):
+@click.option("--delivery", default="auto", show_default=True, type=click.Choice(["auto", "sealed", "custodial"]),
+              help="sealed: the approver's browser makes the keys and seals them to this machine (canopy-web never "
+                   "holds them); custodial: canopy-web makes them; auto: sealed when the role has a sealed key.")
+def request_cmd(role: str, reason: str, minutes: int, agent: str, delivery: str):
     """Ask a person to let this agent take a fenced AWS role; prints the approval page."""
     agent = agent or canopy_web.agent_context_slug()
-    card = request_role(role, reason, minutes, agent)
+    card = request_role(role, reason, minutes, agent, delivery=delivery)
     click.echo(f"aws/{role}: requested for {agent} (#{card.get('id')}, {card.get('status')}), {card.get('minutes')} minutes once approved. "
                f"An owner of {agent}'s workspace approves it with a passkey at:\n  {card.get('approval_url', '')}\n"
                f"Then: canopy aws credentials --role {role} (or a profile from `canopy aws profile --role {role}`).")
