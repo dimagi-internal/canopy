@@ -636,9 +636,9 @@ def test_the_client_file_comes_from_the_workspace_vault():
 
 
 def test_a_missing_client_says_why_the_box_could_not_read_it():
-    """The box's own refusal, or the vault it could not open, is the report — not a
-    generic "needs a key to the Shared vault" (fizzy on cloud-ec2-live, 2026-11-26: the
-    box already held that key; the real reason was thrown away)."""
+    """The box's own refusal, or the vault it could not open, is the report — never a
+    generic "needs a key to the Shared vault", which sends an owner to grant a key the
+    box may already hold."""
     from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer
 
     p = RunnerPreparer.__new__(RunnerPreparer)

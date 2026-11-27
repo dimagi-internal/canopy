@@ -565,9 +565,8 @@ class Bootstrapper:
                 return tok
             secret = self.client_from_vault(slug, tok.client)
             if not secret:
-                # The REASON is the diagnosis: a generic "needs a key" sent an owner to
-                # grant a vault the box already held while the real refusal (the box does
-                # not run the agent, a layer it cannot open) was thrown away.
+                # The reason is the diagnosis: the box may hold the vault's key and still be
+                # refused (it does not run the agent) or miss one layer; say which.
                 why = self.client_vault_why(slug, tok.client) or (
                     "this machine needs a key to the workspace's Shared vault on canopy-web")
                 rep.fail(f"token: cannot read OAuth client '{tok.client}' from the canopy vault "
