@@ -1384,6 +1384,11 @@ def _no_such_task(ref):
 @click.option("--plan", default=None)
 @click.option("--status", default=None)
 @click.option("--assigned", default=None, help="Who the next action waits on. Max 120 chars.")
+@click.option("--waiting-on-email", default=None, metavar="EMAIL",
+              help="The person whose move the next step is: puts the card on THEIR "
+                   "'Waiting on you' page. --assigned is a label and reaches nobody's "
+                   "page; this is what turn.md Step 2.9 means by 'set waiting_on_email'. "
+                   "Pass \"\" to clear it once they have answered.")
 @click.option("--next-action", default=None,
               help="The single concrete next step, verb-first. Max 300 chars — over-length "
                    "is REJECTED, never truncated.")
@@ -1587,6 +1592,7 @@ TASK_FIELD_LIMITS = {
     "next_action": 300,
     "owner": 120,
     "assigned": 120,
+    "waiting_on_email": 254,
     "confidence": 10,
     "score": 8,
     "source_url": 500,
@@ -1602,6 +1608,7 @@ _TASK_FIELD_OPTION = {
     "next_action": "--next-action",
     "owner": "--owner",
     "assigned": "--assigned",
+    "waiting_on_email": "--waiting-on-email",
     "confidence": "--confidence",
     "score": "--score",
     "source_url": "--source-url",
