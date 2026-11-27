@@ -49,7 +49,9 @@ canopy CLI (`canopy agent --help`: `add`, `set`, `tasks`, `actions`, `applied`, 
   by creating the task with `ask_kind` + `ask_body` (MCP `create_tasks`, or
   `canopy agent-publish tasks <file.json>`); a task with no ask is simply work in flight.
   **A next step that belongs to a person needs `waiting_on_email` or an ask.** Writing their name
-  in the next action does not reach their page. Write the ask or next action for
+  in the next action does not reach their page, and neither does `--assigned`. On an existing
+  card: `canopy agent set --slug <slug> --task-id <T> --waiting-on-email <their email>`
+  (`""` clears it once they have moved). Write the ask or next action for
   someone who has not seen the task: what it is, why they'd care, exactly what to do, and what
   happens if they do nothing.
 
