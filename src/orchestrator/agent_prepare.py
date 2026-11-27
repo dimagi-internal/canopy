@@ -133,7 +133,12 @@ RESOLVE_EXTRAS = ("delegated", "vault_layers", "sealed_skipped")
 #: uses: canopy-web's copy of the gog token. Never the agent's other secrets — it writes no
 #: env (a turn's claim does, naming its turn), so reading them every 30 minutes outside a
 #: turn only put them on the wire.
-REFRESH_VALUES = ("gog-token",)
+#: The token AND the OAuth clients it may name: the pass imports the token only with its
+#: client beside it (`step_token`), and a box that has never fully prepared an agent has
+#: no client on disk to fall back on — asking for the token alone left such a box
+#: reporting "the vaults this machine opened hold no 'gog-oauth-client-web'" for a
+#: client that was there.
+REFRESH_VALUES = ("gog-token", *SHARED_CLIENT_ITEMS.values())
 
 
 CHECK_PREFIX = "check: "
@@ -165,6 +170,17 @@ def secrets_off_disk(environ=None) -> bool:
     env = os.environ if environ is None else environ
     return bool((env.get(TURN_ENV_ROOT_VAR) or "").strip()
                 or (env.get("CANOPY_NO_SECRET_FILES") or "").strip() in ("1", "true", "yes"))
+
+
+def git_error(text: str, limit: int = 300) -> str:
+    """The line of git's output that says what went wrong. git writes progress first
+    ("Cloning into '…'...") and the reason last ("fatal: …", "remote: …"), so the first
+    line names nothing: the last fatal/error/remote line, else the last line."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if not lines:
+        return "(no output)"
+    told = [ln for ln in lines if ln.lower().startswith(("fatal:", "error:", "remote:"))]
+    return (told or lines)[-1][:limit]
 
 
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
@@ -365,7 +381,7 @@ class RunnerPreparer(Bootstrapper):
                 r = self._git(["clone", "--depth", "1", "--", url, str(dest)], github_token)
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
-        return "" if r.returncode == 0 else _first_line(r.stderr or r.stdout, 300)
+        return "" if r.returncode == 0 else git_error(r.stderr or r.stdout, 300)
 
     def _materialize_live(self, slug: str, dest: Path) -> dict:
         from orchestrator.agent_materialize import materialize
