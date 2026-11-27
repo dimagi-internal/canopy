@@ -472,13 +472,18 @@ def _recording(secret_refs):
     return transport, resolves
 
 
-def test_the_refresh_asks_only_for_the_gog_token():
+REFRESH_URL = ("resolve?refs=gog-token,gog-oauth-client,gog-oauth-client-web")
+
+
+def test_the_refresh_asks_only_for_the_gog_token_and_its_clients():
     """Not the agent's PAT, Salesforce, GitHub token or anything else: the timer pass
-    writes no env, so every other secret it read went on the wire every 30 minutes."""
+    writes no env, so every other secret it read went on the wire every 30 minutes. The
+    OAuth clients ride with the token: a box that never fully prepared the agent has no
+    client on disk, and without them it can never import the token."""
     transport, resolves = _recording(["CANOPY_WEB_PAT", "gog-token", "salesforce"])
     c = ap.fetch_runner_credentials("hal", base_url="https://c.test", token="t",
                                     transport=transport, minimal=True)
-    assert resolves == ["https://c.test/api/agents/hal/credentials/resolve?refs=gog-token"], \
+    assert resolves == ["https://c.test/api/agents/hal/credentials/" + REFRESH_URL], \
         "exactly one scoped read, never the unscoped fallback"
     assert (c.web_gog_token, c.values) == ("{}", {"gog-token": "{}"})
 
@@ -490,7 +495,7 @@ def test_a_refresh_does_not_depend_on_what_the_agent_declares():
     transport, resolves = _recording([])
     c = ap.fetch_runner_credentials("eva", base_url="https://c.test", token="t",
                                     transport=transport, minimal=True)
-    assert resolves == ["https://c.test/api/agents/eva/credentials/resolve?refs=gog-token"]
+    assert resolves == ["https://c.test/api/agents/eva/credentials/" + REFRESH_URL]
     assert c.web_gog_token == "{}"
 
 
@@ -785,3 +790,12 @@ def test_runner_credentials_carry_the_definition_block():
                                     transport=transport)
     assert c.definition == {"source": "stored", "revision": 2, "root_sha256": "ff"}
     assert c.repo_url == ""
+
+
+def test_a_failed_clone_reports_gits_reason_not_its_progress_line():
+    out = ("Cloning into '/home/x/agents/fizzy'...\n"
+           "remote: Repository not found.\n"
+           "fatal: repository 'https://github.com/o/fizzy.git/' not found\n")
+    assert ap.git_error(out) == "fatal: repository 'https://github.com/o/fizzy.git/' not found"
+    assert ap.git_error("Cloning into 'x'...\nsomething odd\n") == "something odd"
+    assert ap.git_error("") == "(no output)"
