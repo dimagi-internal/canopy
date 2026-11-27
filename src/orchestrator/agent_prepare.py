@@ -183,6 +183,39 @@ def git_error(text: str, limit: int = 300) -> str:
     return (told or lines)[-1][:limit]
 
 
+def failure_line(text: str, limit: int = 300) -> str:
+    """The line of a failed command's output that says what went wrong. A Python crash
+    prints "Traceback (most recent call last):" first and the exception last, so its first
+    line names nothing (a box reported "refresh nova: Traceback (most recent call last):"
+    for days): for a traceback, the last line; otherwise the first."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if not lines:
+        return "(no output)"
+    if any(ln.startswith("Traceback (most recent call last)") for ln in lines):
+        return lines[-1][:limit]
+    return lines[0][:limit]
+
+
+def remote_plugin_source(clone: Path, name: str) -> str:
+    """'' when `clone`'s marketplace.json gives plugin `name` a path in the clone (or says
+    nothing); otherwise what the remote source is, e.g. "url https://…/nova-plugin.git".
+    A marketplace whose plugin lives in ANOTHER repo holds no plugin to copy, so the clone
+    cannot refresh it; Claude Code's own `plugin update` fetches it."""
+    try:
+        mp = json.loads((clone / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    for plug in (mp.get("plugins") or []) if isinstance(mp, dict) else []:
+        if isinstance(plug, dict) and plug.get("name") == name:
+            src = plug.get("source")
+            if isinstance(src, dict):
+                kind = str(src.get("source") or "remote")
+                where = src.get("url") or src.get("repo") or ""
+                return f"{kind} {where}".strip()
+            return ""
+    return ""
+
+
 def fetch_runner_credentials(slug: str, *, base_url: str, token: str,
                              transport: Optional[canopy_web.Transport] = None,
                              minimal: bool = False, purpose: str = "",
@@ -473,7 +506,7 @@ class RunnerPreparer(Bootstrapper):
                          timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
             return f"claude plugin {' '.join(args)}: {e}"
-        return "" if r.returncode == 0 else f"claude plugin {' '.join(args)}: " + _first_line(
+        return "" if r.returncode == 0 else f"claude plugin {' '.join(args)}: " + failure_line(
             r.stderr or r.stdout)
 
     def _listed(self, args: list[str]) -> str:
@@ -493,6 +526,8 @@ class RunnerPreparer(Bootstrapper):
             if err:
                 return err
         if f"{name}@{marketplace_name}" in self._listed(["list"]):
+            if remote_plugin_source(path, name):
+                return self._claude(["update", f"{name}@{marketplace_name}"])
             return self.refresh_dir_plugin(name, path)
         return self._claude(["install", f"{name}@{marketplace_name}"])
 
@@ -508,7 +543,8 @@ class RunnerPreparer(Bootstrapper):
                          capture_output=True, text=True, timeout=600)
         except (OSError, subprocess.TimeoutExpired) as e:
             return f"refresh {name}: {e}"
-        return "" if r.returncode == 0 else f"refresh {name}: " + _first_line(r.stdout or r.stderr)
+        return "" if r.returncode == 0 else f"refresh {name}: " + failure_line(
+            "\n".join(t for t in (r.stdout, r.stderr) if t))
 
     def node_deps(self, path: Path) -> str:
         """`npm ci` (or install) when there are no node_modules, or the lockfile is newer than

@@ -1034,3 +1034,25 @@ def test_update_one_stored_agent_without_a_cli_says_so(tmp_path, monkeypatch):
     r = flu.update_one({"key": "helper@helper", "name": "helper", "marketplace": "helper",
                         "install_path": "", "version": "0.1.0", "sha": "", "clone": str(clone)})
     assert r["status"] == "error" and "no canopy CLI" in r["error"]
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_refresh_names_a_remote_plugin_source_instead_of_crashing(tmp_path, monkeypatch):
+    """nova's marketplace moved its plugin to another repo (`{"source": "url", …}`): the clone
+    holds no plugin, and `Path / dict` crashed the refresh with a bare TypeError."""
+    clone, _old, old_sha = _refresh_box(tmp_path, monkeypatch, name="nova", mkt="nova-marketplace")
+    (clone / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"name": "nova-marketplace", "plugins": [{"name": "nova", "source": {
+            "source": "url", "url": "https://github.com/voidcraft-labs/nova-plugin.git"}}]}))
+    _git(clone, "commit", "-qam", "remote source")
+    _git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
+    monkeypatch.setattr(flu, "build_and_swap", lambda *a: pytest.fail("nothing in the clone to build"))
+
+    result = flu.refresh_plugin("nova", str(clone))
+
+    assert result["status"] == "error", result
+    assert "source is remote (url https://github.com/voidcraft-labs/nova-plugin.git)" in result["error"]
+    assert "claude plugin update nova@nova-marketplace" in result["error"]
+    assert _entry("nova@nova-marketplace")["gitCommitSha"] == old_sha
+    with pytest.raises(ValueError, match="remote"):
+        flu._plugin_source_subdir(str(clone), "nova")
