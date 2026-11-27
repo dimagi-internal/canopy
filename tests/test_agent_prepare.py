@@ -635,6 +635,26 @@ def test_the_client_file_comes_from_the_workspace_vault():
     assert p.client_from_vault("ace", "someone-elses-client") is None
 
 
+def test_a_missing_client_says_why_the_box_could_not_read_it():
+    """The box's own refusal, or the vault it could not open, is the report — never a
+    generic "needs a key to the Shared vault", which sends an owner to grant a key the
+    box may already hold."""
+    from orchestrator.agent_prepare import RunnerCredentials, RunnerPreparer
+
+    p = RunnerPreparer.__new__(RunnerPreparer)
+    p._creds = {
+        "fizzy": RunnerCredentials(error="403: cloud-ec2-live does not run fizzy"),
+        "otto": RunnerCredentials(values={}, extras={"vault_layers": [
+            {"vault": "Shared", "opened": False, "fix": "ask a key holder to grant it"}]}),
+        "ace": RunnerCredentials(values={}, extras={"vault_layers": [
+            {"vault": "Shared", "opened": True, "names": ["gog-oauth-client"]}]}),
+    }
+    p.creds = lambda slug: p._creds[slug]
+    assert "cloud-ec2-live does not run fizzy" in p.client_vault_why("fizzy", "canopy-web")
+    assert "Shared vault (ask a key holder to grant it)" in p.client_vault_why("otto", "canopy-web")
+    assert "opened (Shared) hold no 'gog-oauth-client-web'" in p.client_vault_why("ace", "canopy-web")
+
+
 def test_with_no_token_from_resolve_git_uses_the_turns_gh_token(tmp_path, monkeypatch):
     """canopy-web stopped returning the agent's GitHub token from credentials/resolve;
     a runner preparing an agent in a turn hands over that turn's token, which only git

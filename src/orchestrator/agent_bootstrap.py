@@ -75,6 +75,22 @@ KNOWN_MARKETPLACES = "~/.claude/plugins/known_marketplaces.json"
 #: from.
 SHARED_CLIENT_ITEMS = {"canopy": "gog-oauth-client", "canopy-web": "gog-oauth-client-web"}
 
+
+def client_missing_why(body, item: str) -> str:
+    """Why a resolve body holds no `item`: the vaults this device could not open
+    (`cred_resolve.shut_vaults_note`, canopy-web's own fix for each), else what it did
+    open, so a report never guesses at the cause."""
+    from orchestrator import cred_resolve
+    body = body if isinstance(body, dict) else {}
+    shut = cred_resolve.shut_vaults_note(body)
+    if shut:
+        return shut.removeprefix(" — ")
+    layers = [lay for lay in body.get("vault_layers") or [] if isinstance(lay, dict)]
+    if not layers:
+        return "canopy-web returned no workspace vault for this agent on this machine"
+    opened = ", ".join(str(lay.get("vault")) for lay in layers if lay.get("opened"))
+    return f"the vaults this machine opened ({opened or 'none'}) hold no '{item}'"
+
 CONNECT_MAILBOX_HINT = ("connect it on canopy-web: the agent's Settings → External accounts → "
                         "Connect Google")
 
@@ -365,13 +381,20 @@ class Bootstrapper:
         item = SHARED_CLIENT_ITEMS.get(client)
         if not item:
             return None
+        from orchestrator import cred_resolve
         try:
-            from orchestrator import cred_resolve
             body = cred_resolve.resolve(slug, token=_operator_token(), refs=[item], fallback=False)
-        except Exception:  # noqa: BLE001 — reported by the caller as "not readable"
+        except Exception as e:  # noqa: BLE001 — reported by the caller, with this reason
+            self.__dict__.setdefault("_client_why", {})[slug] = f"canopy-web refused the read: {' '.join(str(e).split())[:300]}"
             return None
         value = (body.get("values") or {}).get(item)
+        if not value:
+            self.__dict__.setdefault("_client_why", {})[slug] = client_missing_why(body, item)
         return str(value) if value else None
+
+    def client_vault_why(self, slug: str, client: str) -> str:
+        """Why `client_from_vault` came back empty, in canopy-web's own words, or ""."""
+        return getattr(self, "_client_why", {}).get(slug, "")
 
     def expected_mailbox(self, slug: str, repo: Path) -> str:
         """The Google account this agent's token must be for: the repo's identity, on a
@@ -542,9 +565,12 @@ class Bootstrapper:
                 return tok
             secret = self.client_from_vault(slug, tok.client)
             if not secret:
+                # The reason is the diagnosis: the box may hold the vault's key and still be
+                # refused (it does not run the agent) or miss one layer; say which.
+                why = self.client_vault_why(slug, tok.client) or (
+                    "this machine needs a key to the workspace's Shared vault on canopy-web")
                 rep.fail(f"token: cannot read OAuth client '{tok.client}' from the canopy vault "
-                         f"(workspace vault item '{item}') — this machine needs a key to the "
-                         "workspace's Shared vault on canopy-web")
+                         f"(workspace vault item '{item}') — {why}")
                 return tok
             # The data dir gog >= 0.40 reads, and the legacy home copy older gog reads.
             name = f"credentials-{tok.client}.json"
