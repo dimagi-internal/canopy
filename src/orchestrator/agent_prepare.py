@@ -65,6 +65,7 @@ from orchestrator.agent_bootstrap import (
     Bootstrapper,
     _first_line,
     _write_private,
+    client_missing_why,
 )
 from orchestrator.agent_doctor import declared_required_plugins
 from orchestrator.agent_web import normalize_repo_url
@@ -329,6 +330,14 @@ class RunnerPreparer(Bootstrapper):
         item = SHARED_CLIENT_ITEMS.get(client)
         value = (self.creds(slug).values or {}).get(item) if item else None
         return str(value) if value else None
+
+    def client_vault_why(self, slug: str, client: str) -> str:
+        """Why this box's resolve holds no `client`: its fetch error (e.g. "<box> does not
+        run <agent>"), else the vaults it could not open, from the resolve's diagnostics."""
+        c = self.creds(slug)
+        if c.error:
+            return f"canopy-web refused this box's read: {' '.join(c.error.split())[:300]}"
+        return client_missing_why(c.extras or {}, SHARED_CLIENT_ITEMS.get(client, client))
 
     def expected_mailbox(self, slug: str, repo: Path) -> str:
         """The Google account THIS instance's token must be for — canopy-web's
