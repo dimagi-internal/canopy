@@ -1862,7 +1862,7 @@ def agent_add(slug, title, ext_id, next_action, status, owner, assigned, confide
 def turn_mode_from_envelope(caller_path) -> dict | None:
     """THIS turn's mode from the caller envelope, or None to use the agent's.
 
-    canopy-web decides the mode per turn when it is claimed — a routing rule such
+    canopy-web decides the mode per turn when it is claimed — a turn-mode rule such
     as "email from beth -> auto" overrides the agent-wide switch for its own work
     — and writes the decision into the envelope as `turn_mode: {mode, basis}`.
     None whenever there is nothing trustworthy to read: no file (a turn started
@@ -2065,7 +2065,7 @@ def agent_coverage(slug, window_days, burst_gap_days, min_bursts, decay_bursts,
                    "The server holds a pinned turn QUEUED (it never expires) and the runner "
                    "claims it once back online. Without this flag such a pin is refused.")
 @click.option("--mode", "turn_mode", type=click.Choice(["auto", "manual"]), default=None,
-              help="Run THIS turn in auto or manual mode, above every routing rule and the "
+              help="Run THIS turn in auto or manual mode, above every turn-mode rule and the "
                    "agent's own switch. manual: anyone who may dispatch. auto: only the "
                    "agent's owner or an admin (workspace owners included), on a session or "
                    "your own PAT — canopy-web refuses anyone else (403). Omit to let the "

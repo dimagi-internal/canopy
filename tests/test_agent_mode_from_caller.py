@@ -1,6 +1,6 @@
 """`canopy agent mode --caller`: THIS turn's mode wins over the agent-wide switch.
 
-canopy-web decides the mode per turn when it is claimed (a routing rule such as
+canopy-web decides the mode per turn when it is claimed (a turn-mode rule such as
 "email from beth -> auto") and writes it into the caller envelope. Every case
 where the envelope cannot say falls back to the agent-wide read — the behaviour
 before per-turn modes — so an older runner or canopy-web changes nothing.

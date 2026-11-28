@@ -53,17 +53,18 @@ canopy agent mode --slug <slug> --caller <path>   # --caller only when your turn
 
 **State the mode in your turn opening with its basis** ("running in auto mode — rule email/beth@…").
 Run exactly the mode the command prints, even if the agent-wide switch says otherwise: canopy-web
-picks the mode at claim (a routing rule can override the agent default for one channel or sender)
+picks the mode at claim (a turn-mode rule can override the agent default for one channel, one sender, or both)
 and `--caller` reads it from the envelope. An `auto` rule for a named sender applies only to a
 VERIFIED message from them; otherwise the basis says `auto withheld` and the turn is manual. Without
 `--caller` it reads the agent-wide switch. A human sets the mode in the agent's Settings → Overview →
-Routing on canopy-web (or `PATCH /api/agents/<slug>/turn-mode` / `PUT …/runner-rules`) — never by
-editing a repo file, never the agent itself mid-turn (the API enforces it).
+Turn mode on canopy-web (or `PATCH /api/agents/<slug>/turn-mode` / `PUT …/turn-mode-rules`); it names
+no runner, so it never needs runner admin — never by editing a repo file, never the agent itself
+mid-turn (the API enforces it).
 **If the read fails** (canopy-web unreachable, no PAT), run **manual** and name the fallback in your
 opening and closeout.
 
 **A dispatch can choose the mode (and the box) for ONE turn:** `canopy agent dispatch --slug <agent>
---mode auto|manual [--runner <name|id>]` is the top rung above every routing rule and the
+--mode auto|manual [--runner <name|id>]` is the top rung above every turn-mode rule and the
 agent-wide switch (basis `dispatch by <email> (<relationship>)`); run it like any other basis.
 `manual` — anyone who may dispatch to the agent. `auto` — only the target agent's owner or an admin
 (workspace owners count; a workspace *admin* does not); anyone else gets a 403, and an admin revoked
