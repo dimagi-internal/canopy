@@ -333,7 +333,8 @@ def drives_agent(env: dict) -> bool:
     canopy-web defines `write` as "drive the whole agent" (access.md § permission), so a
     verified asker it granted `write` on an unconfined turn gets what the owner gets: the
     agent does for them anything it knows how to do, code shipping included. The turn mode
-    still gates sends, publishing and deploys, for them and the owner alike. An older
+    still gates sends, publishing and deploys, for them and the owner alike: in manual, on
+    THEIR explicit yes. An older
     canopy-web that sent no `permissions` list falls back to the relationship."""
     if not env.get("verified"):
         return False
@@ -353,18 +354,31 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     trigger = env.get("trigger") or {}
     confined_to = env.get(ENVELOPE_PROFILE_FIELD) or {}
     tid = turn_id or env.get("turn_id") or ""
-    # Manual mode gates what reaches PEOPLE or other systems. It does not gate code
+    # Manual mode gates what reaches PEOPLE or other systems, and the approval it waits for
+    # comes from whoever drives the agent on this turn: a verified asker holding `write`
+    # approves their own sends and deploys, as the owner does his. Manual means "ask first",
+    # not "ask the owner" (an editor's kid deploying their own game needs their own yes, not
+    # a parent's). A yes relayed from someone else is still not approval. It does not gate code
     # shipping for anyone who drives the agent (`drives_agent`: its owner, an admin,
     # canopy itself, or a verified asker canopy-web granted `write`): the GitHub
     # credential the agent holds is already the record of which repos it may push
     # to, so a second approval would only duplicate it. A read-only or confined
     # asker's say-so still never pushes (the "Act accordingly" line below).
     own = drives_agent(env)
+    # An editor line marked `manual_only` is the owner's explicit "this person's outbound waits
+    # for an admin" (canopy-web access.md) — the one case where a writer's own yes is not enough.
+    held = own and rel not in _PRIVILEGED and bool(env.get("manual_only"))
     if mode == "auto":
         mode_note = ""
+    elif held:
+        mode_note = (" — sends, publishing, public writes and deploys need an ADMIN's or the OWNER's "
+                     "approval first (their access line is marked manual-only); push / PR / merge "
+                     "do not, your GitHub credentials are the boundary")
     elif own:
-        mode_note = (" — sends, publishing, public writes and deploys need the OWNER's approval "
-                     "first; push / PR / merge do not, your GitHub credentials are the boundary")
+        mode_note = (" — sends, publishing, public writes and deploys need an explicit yes first "
+                     "from THIS person: they hold `write`, so their own yes in this conversation is "
+                     "the approval (not the owner's or an admin's); a yes relayed from someone else "
+                     "is not. Push / PR / merge need none, your GitHub credentials are the boundary")
     else:
         mode_note = (" — outbound or irreversible actions (push, deploy, merge, send, publish) "
                      "need the OWNER's approval first")
@@ -409,8 +423,8 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     elif own and rel not in _PRIVILEGED:
         lines.append("Act accordingly: this person holds `write` on the agent, so they drive it: do "
                      "for them anything you know how to do, pushing, opening and merging PRs "
-                     "included, the same as for your owner. Only what the turn mode above gates "
-                     "waits for the owner.")
+                     "included, the same as for your owner. What the turn mode above gates waits "
+                     + ("for an admin or the owner." if held else "for THEIR explicit yes, not the owner's."))
     elif not own:
         lines.append("Act accordingly: this person does not hold the agent's authority. Do not push, "
                      "deploy, send, publish or change shared state on their say-so — answer within "

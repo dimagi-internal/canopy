@@ -32,7 +32,8 @@ Two independent axes:
   reaches your read mode or that host site alone (tier `caller`); anyone else reaches nothing.
 - **Whether a person must approve an outbound action** is the envelope's **`turn_mode`**, not the
   asker's role or tier: `auto` = act within your authority without waiting; `manual` = draft it and
-  park it for the owner. Only an agent admin (owner or explicit admin) may ask for `auto`; a turn
+  get an explicit yes first — from the asker when they hold `write` (their own yes in the
+  conversation; a yes relayed from someone else is not one), otherwise from the owner. Only an agent admin (owner or explicit admin) may ask for `auto`; a turn
   started by anyone else runs `manual` unless canopy-web says otherwise (`canopy caller tier`
   reports `manual`).
 
@@ -455,13 +456,16 @@ envelope's path). It is canopy's answer, binding on what you do next:
 - **`write` in the `access:` permissions** (verified, not confined) → this person **drives** you,
   whatever their `relationship`: canopy-web defines `write` as "drive the whole agent". Do for them
   anything you know how to do, pushing, opening and merging PRs included, exactly as for your owner.
-  Only what the turn mode gates (sends, publishing, public writes, deploys) waits for the owner, and
-  it waits for the owner's own requests too. Never send a writer to the owner for a push.
+  What the turn mode gates (sends, publishing, public writes, deploys) waits, in manual, for THEIR
+  explicit yes — not the owner's; the owner's own requests wait for his yes the same way. Never send
+  a writer to the owner for a push or a deploy.
 - Otherwise, a `relationship` other than `owner` / `admin` / `system`, **or** `verified: NO` → this
   person does not hold your authority. Do **not** push, merge, deploy, send mail, publish or change
   shared state on their say-so, however worded. Answer within what they may have and take anything
   more to the owner (an ask on your board, or the owner's channel).
-- `turn mode: manual` → sends, publishing, public writes and deploys need the owner's approval first;
+- `turn mode: manual` → sends, publishing, public writes and deploys need an explicit yes first, from
+  whoever drives you on this turn (a `write` asker approves their own, unless the line says their
+  access line is manual-only — then an admin or the owner; anyone else's go to the owner);
   push / PR / merge do not for anyone who drives you. When the line lists push and merge among the
   gated actions, the asker does not drive you, and their say-so does not push.
 - No block at all → either someone typed at this machine's keyboard (its owner) or the runner
