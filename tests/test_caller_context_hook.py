@@ -226,8 +226,8 @@ def _mode_line(text):
 @pytest.mark.parametrize("rel", ["owner", "admin", "system"])
 def test_the_agents_own_manual_turn_does_not_gate_shipping(tmp_path, rel):
     line = _mode_line(cc.summarize({**OWN, "relationship": rel}, str(tmp_path / "e.json"), TID))
-    assert "sends, publishing, public writes and deploys need the OWNER's approval first" in line
-    assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
+    assert "sends, publishing, public writes and deploys need an explicit yes first" in line
+    assert "Push / PR / merge need none, your GitHub credentials are the boundary" in line
     assert "(push, deploy, merge, send, publish)" not in line
 
 
@@ -243,10 +243,23 @@ def test_a_member_holding_write_drives_the_agent_and_ships_without_the_owner(tmp
     # publishing and deploys stay gated by the mode for them as for the owner.
     text = cc.summarize(WRITER, str(tmp_path / "e.json"), TID)
     line = _mode_line(text)
-    assert "push / PR / merge do not, your GitHub credentials are the boundary" in line
+    assert "Push / PR / merge need none, your GitHub credentials are the boundary" in line
     assert "(push, deploy, merge, send, publish)" not in line
     assert "holds `write` on the agent, so they drive it" in text
     assert "does not hold the agent's authority" not in text
+
+
+def test_a_writer_approves_their_own_deploy_in_manual_not_the_owner(tmp_path):
+    # Manual means "ask first", and the person asked is whoever drives the agent on this
+    # turn: an editor deploying their own work approves it, no owner or admin needed.
+    # A yes passed along from someone else is still not approval.
+    text = cc.summarize(WRITER, str(tmp_path / "e.json"), TID)
+    line = _mode_line(text)
+    assert "need an explicit yes first from THIS person" in line
+    assert "not the owner's or an admin's" in line
+    assert "a yes relayed from someone else is not" in line
+    assert "OWNER's approval" not in line
+    assert "waits for THEIR explicit yes, not the owner's" in text
 
 
 @pytest.mark.parametrize("override", [
