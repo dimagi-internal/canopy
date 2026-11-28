@@ -262,6 +262,16 @@ def test_a_writer_approves_their_own_deploy_in_manual_not_the_owner(tmp_path):
     assert "waits for THEIR explicit yes, not the owner's" in text
 
 
+def test_a_manual_only_editor_line_still_waits_for_an_admin(tmp_path):
+    # `manual_only` on the line is the owner choosing review for this person: their own yes
+    # is not enough there, and the agent is told so.
+    text = cc.summarize({**WRITER, "manual_only": True}, str(tmp_path / "e.json"), TID)
+    line = _mode_line(text)
+    assert "need an ADMIN's or the OWNER's approval first" in line
+    assert "from THIS person" not in line
+    assert "waits for an admin or the owner." in text
+
+
 @pytest.mark.parametrize("override", [
     {"verified": False},
     {"permissions": ["read"]},

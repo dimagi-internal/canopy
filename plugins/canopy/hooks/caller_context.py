@@ -365,8 +365,15 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
     # to, so a second approval would only duplicate it. A read-only or confined
     # asker's say-so still never pushes (the "Act accordingly" line below).
     own = drives_agent(env)
+    # An editor line marked `manual_only` is the owner's explicit "this person's outbound waits
+    # for an admin" (canopy-web access.md) — the one case where a writer's own yes is not enough.
+    held = own and rel not in _PRIVILEGED and bool(env.get("manual_only"))
     if mode == "auto":
         mode_note = ""
+    elif held:
+        mode_note = (" — sends, publishing, public writes and deploys need an ADMIN's or the OWNER's "
+                     "approval first (their access line is marked manual-only); push / PR / merge "
+                     "do not, your GitHub credentials are the boundary")
     elif own:
         mode_note = (" — sends, publishing, public writes and deploys need an explicit yes first "
                      "from THIS person: they hold `write`, so their own yes in this conversation is "
@@ -417,7 +424,7 @@ def summarize(env: dict, path: str, turn_id: str = "") -> str:
         lines.append("Act accordingly: this person holds `write` on the agent, so they drive it: do "
                      "for them anything you know how to do, pushing, opening and merging PRs "
                      "included, the same as for your owner. What the turn mode above gates waits "
-                     "for THEIR explicit yes, not the owner's.")
+                     + ("for an admin or the owner." if held else "for THEIR explicit yes, not the owner's."))
     elif not own:
         lines.append("Act accordingly: this person does not hold the agent's authority. Do not push, "
                      "deploy, send, publish or change shared state on their say-so — answer within "
